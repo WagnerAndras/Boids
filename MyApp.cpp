@@ -3,14 +3,19 @@
 #include "includes/SDL_GLDebugMessageCallback.h"
 #include "includes/ProgramBuilder.h"
 
+#include <cmath>
+#include <glm/common.hpp>
+#include <glm/exponential.hpp>
 #include <glm/ext/quaternion_common.hpp>
 #include <glm/ext/quaternion_geometric.hpp>
+#include <glm/ext/quaternion_trigonometric.hpp>
 #include <glm/ext/scalar_constants.hpp>
 #include <glm/fwd.hpp>
 #include <glm/geometric.hpp>
 #include <glm/matrix.hpp>
 //#include <imgui.h>
 
+#include <glm/trigonometric.hpp>
 #include <iostream>
 #include <string>
 #include <array>
@@ -20,9 +25,6 @@
 
 CMyApp::CMyApp()
 {
-	GLint max_uniform_block_size;
-	glGetIntegerv(GL_MAX_UNIFORM_BLOCK_SIZE, &max_uniform_block_size);
-	std::cout << "Maximum uniform block size in bytes (must be at least 16384) " << max_uniform_block_size << std::endl;
 }
 
 CMyApp::~CMyApp()
@@ -49,7 +51,7 @@ void CMyApp::InitShaders()
 	m_programNoInstanceID = glCreateProgram();
 	ProgramBuilder{ m_programNoInstanceID }
 		.ShaderStage(GL_VERTEX_SHADER, "Boid.vert")
-		.ShaderStage(GL_FRAGMENT_SHADER, "Boid.frag")
+		//.ShaderStage(GL_FRAGMENT_SHADER, "Boid.frag")
 		.Link();
 
 /*
@@ -115,26 +117,28 @@ void CMyApp::CleanGeometry()
 
 void CMyApp::InitPositions()
 {
-	// Initializing the Suzanne positions and rotations 
+	// Initializing the Boid positions and rotations 
 	std::random_device rd;
 	std::mt19937 mt(rd());
+	mt.seed(42);
 	std::uniform_real_distribution<float> randOffset(-1.0f, 1.0f);
 	std::uniform_real_distribution<float> randAngle(0.0f, 2.0f * glm::pi<float>());
 	
-	// TODO mat3:
-	m_world_matricies.reserve(INST_NUM);
+	// initialize each boid with a posiotion and an angle
+	m_boids.reserve(INST_NUM);
 	for (int i = 0; i < INST_NUM; ++i)
 	{
-		glm::mat4 word =
-			glm::translate(glm::vec3(randOffset(rd), randOffset(rd), 0))
-			*
-			glm::scale(glm::vec3(0.01))
-			*
-			glm::rotate(randAngle(rd), glm::vec3(0, 0, 1));
-
-		m_world_matricies.push_back(word);
+		m_boids.push_back(Boid {
+				glm::vec2(randOffset(rd), randOffset(rd)),
+				randAngle(rd),
+				0
+			});
 	}
 
+	m_world_matricies = std::vector<glm::mat4>(INST_NUM);
+	//m_world_matricies.assign(INST_NUM, glm::mat4(0));
+
+	/*
 	// We create one buffer id
 	glCreateBuffers(1, &m_uboID);
   glNamedBufferData( m_uboID, uboSizeBytes, nullptr, GL_DYNAMIC_DRAW );
@@ -144,8 +148,10 @@ void CMyApp::InitPositions()
 						m_uboID,			// Buffer ID
 						0,					// Offset
 						uboSizeBytes);		// Size in bytes
+	*/
 }
 
+/*
 void CMyApp::InitAttributeMode()
 {
 	// TODO: vec3, mat3
@@ -180,15 +186,15 @@ void CMyApp::InitAttributeMode()
 	glVertexArrayBindingDivisor(m_BoidGPU.vaoID, // VAO
 								 1,	// Index
 								 1 );// Divisor
-	/*
-	glVertexArrayBindingDivisor(m_BoidGPU.vaoID, // VAO
-								 2,	// Index
-								 1 );// Divisor
-	*/
+	//glVertexArrayBindingDivisor(m_BoidGPU.vaoID, // VAO
+	//							 2,	// Index
+	//							 1 );// Divisor
+	
 
 	addAttrib(1,3);
 	//addAttrib(2,7);
 }
+*/
 
 
 bool CMyApp::Init()
@@ -202,21 +208,12 @@ bool CMyApp::Init()
 	InitShaders();
 	InitGeometry();
 	InitPositions();
-	InitAttributeMode();
+	//InitAttributeMode();
 
 	// Other
 
 	glEnable(GL_CULL_FACE);	 // Enable discarding the back-facing faces.
 	glCullFace(GL_BACK);     // GL_BACK: facets facing away from camera, GL_FRONT: facets facing towards the camera
-
-	/*
-	// Camera
-	m_camera.SetView(
-		glm::vec3(5, 5, 5),	// From where we look at the scene - eye
-		glm::vec3(0, 0, 0),	// Which point of the scene we are looking at - at
-		glm::vec3(0, 1, 0)	// Upwards direction - up
-	);
-	*/
 
 	return true;
 }
@@ -233,7 +230,50 @@ void CMyApp::Clean()
 void CMyApp::Update( const SUpdateInfo& updateInfo )
 {
 	m_ElapsedTimeInSec = updateInfo.ElapsedTimeInSec;
+	m_DeltaTimeInSec = updateInfo.DeltaTimeInSec;
 
+}
+
+void CMyApp::SteerBoids()
+{
+	for (int i = 0; i < INST_NUM; ++i)
+	{
+		glm::vec2 steer_vec = glm::vec2(0);
+		glm::vec2 dir = glm::vec2(glm::cos(m_boids[i].angle), glm::sin(m_boids[i].angle));
+
+		for (int j = 0; j < INST_NUM; j++)
+		{
+
+			// see if it's the same
+			if (j == i) continue;
+
+			glm::vec2 to_other = m_boids[j].pos - m_boids[i].pos;
+			float dst = glm::length(to_other);
+
+			// see if it's inside the perception radius
+			if (dst > PERCEPTION_DISTANCE) continue;
+
+			glm::vec2 to_other_n = to_other / dst;
+
+			// see if it's in the field of view
+			if (glm::dot(dir, to_other_n) < FOV_COS) continue;
+
+
+			// TODO weight functions
+			steer_vec +=
+
+			// Separation
+			-to_other_n * (glm::sqrt(PERCEPTION_DISTANCE / dst) - 1) +
+
+			// Alignment
+			glm::vec2(glm::cos(m_boids[j].angle), glm::sin(m_boids[j].angle)) +
+
+			// Cohesion
+			to_other_n;
+		}
+
+		m_boids[i].steering = glm::atan(steer_vec.y, steer_vec.x);
+	}
 }
 
 void CMyApp::DrawNoInstance()
@@ -244,8 +284,28 @@ void CMyApp::DrawNoInstance()
 
 	glBindVertexArray(m_BoidGPU.vaoID);
 
-	// TODO: mat3
-	for (int i = 0; i < INST_NUM; ++i) {
+	SteerBoids(); // set steering direction
+
+	for (int i = 0; i < INST_NUM; ++i)
+	{
+		// turn towards the steering direction
+		m_boids[i].angle += glm::min(m_DeltaTimeInSec * ANGULAR_VELOCITY, 1.0f) * (m_boids[i].steering - m_boids[i].angle);
+
+		// move in the new direction
+		float whole;
+		m_boids[i].pos += glm::vec2(glm::cos(m_boids[i].angle), glm::sin(m_boids[i].angle)) * VELOCITY * m_DeltaTimeInSec;
+		//TODO: bring back on other side
+
+		glm::mat4 word =
+			glm::translate(glm::vec3(m_boids[i].pos, 0))
+			*
+			glm::rotate(m_boids[i].angle, glm::vec3(0, 0, 1))
+			*
+			glm::scale(glm::vec3(0.01));
+
+		m_world_matricies[i] = word;
+
+	// TODO mat3:
 		glUniformMatrix4fv( ul("world"), 1, GL_FALSE, glm::value_ptr(m_world_matricies[i]));
 		glDrawElements(GL_TRIANGLES, m_BoidGPU.count, GL_UNSIGNED_INT, 0);
 	}

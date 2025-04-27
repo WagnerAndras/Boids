@@ -4,8 +4,12 @@
 #include "includes/Camera.h"
 
 // GLM
+#include <glm/ext/scalar_constants.hpp>
+#include <glm/fwd.hpp>
 #include <glm/glm.hpp>
+#include <glm/gtc/constants.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <glm/trigonometric.hpp>
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/transform.hpp>
 
@@ -20,6 +24,13 @@ struct SUpdateInfo
 {
 	float ElapsedTimeInSec = 0.0f; // Program indulása óta eltelt idő
 	float DeltaTimeInSec   = 0.0f; // Előző Update óta eltelt idő
+};
+
+// TODO change to representing direction with vector
+struct Boid {
+	glm::vec2 pos;
+	float angle;
+	float steering;
 };
 
 class CMyApp
@@ -43,14 +54,23 @@ protected:
 	void DrawNoInstance();
 	void DrawUboInstance();
 	void DrawArrayAttrInstanced();
+	
+	// Boids
+	// TODO weight fucntions
+	static constexpr float PERCEPTION_DISTANCE = 0.1; // in uv
+	static constexpr float FOV = 180; // in degrees
+	const float FOV_COS = glm::cos(glm::radians(FOV)/2);
+	static constexpr float ANGULAR_VELOCITY = glm::half_pi<float>(); // in radians/second
+	static constexpr float VELOCITY = 0.1; // in uv/second
+	void SteerBoids();
+	std::vector<Boid> m_boids;
 
 	// Variables
-
 	float m_ElapsedTimeInSec = 0.0f;
+	float m_DeltaTimeInSec = 0.0f;
 	
 	// Camera
 	Camera m_camera;
-
 	
 	// OpenGL
 
