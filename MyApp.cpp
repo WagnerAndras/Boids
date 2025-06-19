@@ -6,12 +6,14 @@
 #include <cmath>
 #include <glm/common.hpp>
 #include <glm/exponential.hpp>
+#include <glm/ext/matrix_transform.hpp>
 #include <glm/ext/quaternion_common.hpp>
 #include <glm/ext/quaternion_geometric.hpp>
 #include <glm/ext/quaternion_trigonometric.hpp>
 #include <glm/ext/scalar_constants.hpp>
 #include <glm/fwd.hpp>
 #include <glm/geometric.hpp>
+#include <glm/gtc/constants.hpp>
 #include <glm/matrix.hpp>
 //#include <imgui.h>
 
@@ -87,12 +89,7 @@ void CMyApp::CleanShaders()
 
 void CMyApp::InitGeometry()
 {
-	const std::initializer_list<VertexAttributeDescriptor> vertexAttribList =
-	{
-		{ 0, 0, 2, GL_FLOAT }, // position only, no offset
-	};
-
-	MeshObject<glm::vec2> m_BoidMeshCPU; // position only
+	MeshObject<glm::vec2> m_BoidMeshCPU;
 
 	// Simple triangle
 	m_BoidMeshCPU.vertexArray = {
@@ -101,13 +98,12 @@ void CMyApp::InitGeometry()
 		glm::vec2(  1, 0 ),
 	};
 
-	// TODO: unneccessary
 	m_BoidMeshCPU.indexArray =
 	{
 		0, 1, 2
 	};
 
-	m_BoidGPU = CreateGLObjectFromMesh( m_BoidMeshCPU, vertexAttribList );
+	m_BoidGPU = CreateGLObjectFromMesh( m_BoidMeshCPU, { { 0, offsetof( glm::vec2,x), 2, GL_FLOAT}});
 }
 
 void CMyApp::CleanGeometry()
@@ -118,25 +114,25 @@ void CMyApp::CleanGeometry()
 void CMyApp::InitPositions()
 {
 	// Initializing the Boid positions and rotations 
-	std::random_device rd;
-	std::mt19937 mt(rd());
-	mt.seed(42);
+	std::random_device r; // seed source
+	std::seed_seq seeds{r(), r(), r(), r(), r(), r(), r(), r()};
+	std::mt19937 mt(seeds); // random engine with seeds
 	std::uniform_real_distribution<float> randOffset(-1.0f, 1.0f);
-	std::uniform_real_distribution<float> randAngle(0.0f, 2.0f * glm::pi<float>());
+	std::uniform_real_distribution<float> randAngle(-glm::pi<float>(), glm::pi<float>());
 	
 	// initialize each boid with a posiotion and an angle
 	m_boids.reserve(INST_NUM);
 	for (int i = 0; i < INST_NUM; ++i)
 	{
+		float angle = randAngle(mt);
 		m_boids.push_back(Boid {
-				glm::vec2(randOffset(rd), randOffset(rd)),
-				randAngle(rd),
-				0
+				glm::vec2(randOffset(mt), randOffset(mt)),
+				glm::vec2(glm::cos(angle), glm::sin(angle)), // TODO vector
+				glm::vec2(0)
 			});
 	}
 
-	m_world_matricies = std::vector<glm::mat4>(INST_NUM);
-	//m_world_matricies.assign(INST_NUM, glm::mat4(0));
+	m_world_matricies.assign(INST_NUM, glm::mat4(0));
 
 	/*
 	// We create one buffer id
@@ -231,15 +227,14 @@ void CMyApp::Update( const SUpdateInfo& updateInfo )
 {
 	m_ElapsedTimeInSec = updateInfo.ElapsedTimeInSec;
 	m_DeltaTimeInSec = updateInfo.DeltaTimeInSec;
-
 }
 
 void CMyApp::SteerBoids()
 {
 	for (int i = 0; i < INST_NUM; ++i)
 	{
-		glm::vec2 steer_vec = glm::vec2(0);
-		glm::vec2 dir = glm::vec2(glm::cos(m_boids[i].angle), glm::sin(m_boids[i].angle));
+
+		m_boids[i].sdir = m_boids[i].dir;
 
 		for (int j = 0; j < INST_NUM; j++)
 		{
@@ -253,33 +248,31 @@ void CMyApp::SteerBoids()
 			// see if it's inside the perception radius
 			if (dst > PERCEPTION_DISTANCE) continue;
 
-			glm::vec2 to_other_n = to_other / dst;
+			glm::vec2 to_other_normalized = to_other / dst;
 
 			// see if it's in the field of view
-			if (glm::dot(dir, to_other_n) < FOV_COS) continue;
+			if (glm::dot(m_boids[i].dir, to_other_normalized) < FOV_COS) continue;
 
 
 			// TODO weight functions
-			steer_vec +=
+			m_boids[i].sdir +=
 
 			// Separation
-			-to_other_n * (glm::sqrt(PERCEPTION_DISTANCE / dst) - 1) +
+			-to_other_normalized * (glm::sqrt(PERCEPTION_DISTANCE / dst - 1) * 2) +
 
 			// Alignment
-			glm::vec2(glm::cos(m_boids[j].angle), glm::sin(m_boids[j].angle)) +
+			m_boids[j].dir +
 
 			// Cohesion
-			to_other_n;
+			to_other_normalized;
 		}
 
-		m_boids[i].steering = glm::atan(steer_vec.y, steer_vec.x);
+		m_boids[i].sdir = glm::normalize(m_boids[i].sdir);
 	}
 }
 
 void CMyApp::DrawNoInstance()
 {
-	// Nothing unusal here
-
 	glUseProgram(m_programNoInstanceID);
 
 	glBindVertexArray(m_BoidGPU.vaoID);
@@ -288,30 +281,44 @@ void CMyApp::DrawNoInstance()
 
 	for (int i = 0; i < INST_NUM; ++i)
 	{
+
+		glm::vec3 dir = glm::vec3(m_boids[i].dir, 0.0f);
+		// std::cout << dir.x << " " << dir.y << std::endl;
+		glm::vec3 sdir = glm::vec3(m_boids[i].sdir, 0.0f);
+		// std::cout << sdir.x << " " << sdir.y << std::endl;
+
 		// turn towards the steering direction
-		m_boids[i].angle += glm::min(m_DeltaTimeInSec * ANGULAR_VELOCITY, 1.0f) * (m_boids[i].steering - m_boids[i].angle);
+		float angle = glm::acos(glm::dot(dir, sdir)) * glm::min(m_DeltaTimeInSec * ANGULAR_VELOCITY, 1.0f);
+		glm::vec3 axis = glm::cross(dir, sdir);
+		if (abs(axis.z) > 0.01f) {
+			glm::vec2 ndir = glm::rotate(angle, axis) * glm::vec4(dir, 1.0f);
+			m_boids[i].dir = ndir;
+		}
+
 
 		// move in the new direction
-		float whole;
-		m_boids[i].pos += glm::vec2(glm::cos(m_boids[i].angle), glm::sin(m_boids[i].angle)) * VELOCITY * m_DeltaTimeInSec;
+		m_boids[i].pos += m_boids[i].dir * VELOCITY * m_DeltaTimeInSec;
 		//TODO: bring back on other side
+		m_boids[i].pos.x = std::fmodf(m_boids[i].pos.x + 3.0f, 2.0f) - 1.0f;
+		m_boids[i].pos.y = std::fmodf(m_boids[i].pos.y + 3.0f, 2.0f) - 1.0f;
 
-		glm::mat4 word =
+		glm::mat4 world =
 			glm::translate(glm::vec3(m_boids[i].pos, 0))
 			*
-			glm::rotate(m_boids[i].angle, glm::vec3(0, 0, 1))
+			glm::rotate(atan2(m_boids[i].dir.y, m_boids[i].dir.x), glm::vec3(0, 0, 1))
 			*
 			glm::scale(glm::vec3(0.01));
 
-		m_world_matricies[i] = word;
-
 	// TODO mat3:
-		glUniformMatrix4fv( ul("world"), 1, GL_FALSE, glm::value_ptr(m_world_matricies[i]));
+		glUniformMatrix4fv( ul("world"), 1, GL_FALSE, glm::value_ptr(world));
+		//glUniformMatrix4fv( ul("world"), 1, GL_FALSE, glm::value_ptr(m_world_matricies[i]));
 		glDrawElements(GL_TRIANGLES, m_BoidGPU.count, GL_UNSIGNED_INT, 0);
 	}
 
 	glBindVertexArray(0);
 	glUseProgram(0);
+	
+	// exit(0);
 }
 
 /*

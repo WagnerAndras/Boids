@@ -26,11 +26,10 @@ struct SUpdateInfo
 	float DeltaTimeInSec   = 0.0f; // Előző Update óta eltelt idő
 };
 
-// TODO change to representing direction with vector
 struct Boid {
 	glm::vec2 pos;
-	float angle;
-	float steering;
+	glm::vec2 dir;
+	glm::vec2 sdir;
 };
 
 class CMyApp
