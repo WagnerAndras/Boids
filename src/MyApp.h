@@ -51,6 +51,7 @@ public:
 
 	void Update( const SUpdateInfo& );
 	void Render();
+	void RenderGUI();
 
 	void Resize(int, int);
 

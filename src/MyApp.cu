@@ -21,7 +21,7 @@
 #include <glm/geometric.hpp>
 #include <glm/gtc/constants.hpp>
 #include <glm/matrix.hpp>
-//#include <imgui.h>
+#include <imgui.h>
 
 #include <glm/trigonometric.hpp>
 #include <vector>
@@ -411,6 +411,31 @@ void CMyApp::Render()
 	DrawNoInstance();
 	//DrawUboInstance();
 	//DrawArrayAttrInstanced();
+}
+
+void CMyApp::RenderGUI()
+{
+	// ImGui::ShowDemoWindow();
+	if (ImGui::Begin("Instancing"))
+	{
+		const float refresh_time = 0.5f;
+		static float timer = 0;
+		static int   frameCount = 0;
+		static float fps = 0;
+		static float avgFrameTime = 0.0f;
+
+		timer += m_DeltaTimeInSec;
+		++frameCount;
+		if (timer > refresh_time) {
+			avgFrameTime = timer / frameCount;
+			fps = frameCount / timer;
+			timer = 0;
+			frameCount = 0;
+		}
+		ImGui::Text("FPS: %d", static_cast<int>(fps));
+		ImGui::Text("ms %f", avgFrameTime);
+	}
+	ImGui::End();
 }
 
 // New window size
