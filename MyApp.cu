@@ -3,6 +3,12 @@
 #include "includes/SDL_GLDebugMessageCallback.h"
 #include "includes/ProgramBuilder.h"
 
+
+#include "device_launch_parameters.h"
+#include <cuda_runtime.h>
+#include "includes/helper_cuda.h"
+
+//#include <__clang_cuda_builtin_vars.h>
 #include <cmath>
 #include <glm/common.hpp>
 #include <glm/exponential.hpp>
@@ -18,10 +24,6 @@
 //#include <imgui.h>
 
 #include <glm/trigonometric.hpp>
-#include <iostream>
-#include <string>
-#include <array>
-#include <algorithm>
 #include <vector>
 #include <random>
 
@@ -121,16 +123,18 @@ void CMyApp::InitPositions()
 	std::uniform_real_distribution<float> randAngle(-glm::pi<float>(), glm::pi<float>());
 	
 	// initialize each boid with a posiotion and an angle
-	m_boids.reserve(INST_NUM);
 	for (int i = 0; i < INST_NUM; ++i)
 	{
 		float angle = randAngle(mt);
-		m_boids.push_back(Boid {
+		m_boids[i] = Boid {
 				glm::vec2(randOffset(mt), randOffset(mt)),
-				glm::vec2(glm::cos(angle), glm::sin(angle)), // TODO vector
+				glm::vec2(glm::cos(angle), glm::sin(angle)),
 				glm::vec2(0)
-			});
+			};
 	}
+
+	// Allocate vectors in device memory
+  cudaMalloc(&d_boids, INST_NUM * sizeof(Boid));
 
 	m_world_matricies.assign(INST_NUM, glm::mat4(0));
 
@@ -221,6 +225,8 @@ void CMyApp::Clean()
 	
 	CleanShaders();
 	CleanGeometry();
+
+	cudaFree(d_boids);
 }
 
 void CMyApp::Update( const SUpdateInfo& updateInfo )
@@ -229,46 +235,66 @@ void CMyApp::Update( const SUpdateInfo& updateInfo )
 	m_DeltaTimeInSec = updateInfo.DeltaTimeInSec;
 }
 
-void CMyApp::SteerBoids()
+__global__ void SteerBoids(Boid* boids)
 {
-	for (int i = 0; i < INST_NUM; ++i)
+	int i = threadIdx.x;
+	const float FOV_COS = std::cos((FOV * M_PI / 180.0f) / 2.0f);
+	boids[i].sdir = boids[i].dir;
+
+	for (int j = 0; j < INST_NUM; j++)
 	{
 
-		m_boids[i].sdir = m_boids[i].dir;
+		// see if it's the same
+		if (j == i) continue;
 
-		for (int j = 0; j < INST_NUM; j++)
-		{
+		glm::vec2 to_other = boids[j].pos - boids[i].pos;
+		float dst = glm::length(to_other);
 
-			// see if it's the same
-			if (j == i) continue;
+		// see if it's inside the perception radius
+		if (dst > PERCEPTION_DISTANCE) continue;
 
-			glm::vec2 to_other = m_boids[j].pos - m_boids[i].pos;
-			float dst = glm::length(to_other);
+		glm::vec2 to_other_normalized = to_other / dst;
 
-			// see if it's inside the perception radius
-			if (dst > PERCEPTION_DISTANCE) continue;
-
-			glm::vec2 to_other_normalized = to_other / dst;
-
-			// see if it's in the field of view
-			if (glm::dot(m_boids[i].dir, to_other_normalized) < FOV_COS) continue;
+		// see if it's in the field of view
+		if (glm::dot(boids[i].dir, to_other_normalized) < FOV_COS) continue;
 
 
-			// TODO weight functions
-			m_boids[i].sdir +=
+		// TODO weight functions
+		boids[i].sdir +=
 
-			// Separation
-			-to_other_normalized * (glm::sqrt(PERCEPTION_DISTANCE / dst - 1) * 2) +
+		// Separation
+		-to_other_normalized * (glm::sqrt(PERCEPTION_DISTANCE / dst - 1.0f) * 2.5f) +
 
-			// Alignment
-			m_boids[j].dir +
+		// Alignment
+		boids[j].dir +
 
-			// Cohesion
-			to_other_normalized;
-		}
-
-		m_boids[i].sdir = glm::normalize(m_boids[i].sdir);
+		// Cohesion
+		to_other_normalized;
 	}
+
+	boids[i].sdir = glm::normalize(boids[i].sdir);
+}
+
+
+__global__ void MoveBoids(Boid* boids, float DeltaTimeInSec)
+{
+	int i = threadIdx.x;
+	glm::vec3 dir = glm::vec3(boids[i].dir, 0.0f);
+	glm::vec3 sdir = glm::vec3(boids[i].sdir, 0.0f);
+
+	// turn towards the steering direction
+	float angle = glm::acos(glm::dot(dir, sdir)) * glm::min(DeltaTimeInSec * ANGULAR_VELOCITY, 1.0f);
+	glm::vec3 axis = glm::cross(dir, sdir);
+	if (abs(axis.z) > 0.01f) {
+		glm::vec2 ndir = glm::rotate(angle, axis) * glm::vec4(dir, 1.0f);
+		boids[i].dir = ndir;
+	}
+
+
+	// move in the new direction
+	boids[i].pos += boids[i].dir * VELOCITY * DeltaTimeInSec;
+	boids[i].pos.x = std::fmodf(boids[i].pos.x + 3.0f, 2.0f) - 1.0f;
+	boids[i].pos.y = std::fmodf(boids[i].pos.y + 3.0f, 2.0f) - 1.0f;
 }
 
 void CMyApp::DrawNoInstance()
@@ -277,31 +303,17 @@ void CMyApp::DrawNoInstance()
 
 	glBindVertexArray(m_BoidGPU.vaoID);
 
-	SteerBoids(); // set steering direction
+  checkCudaErrors( cudaMemcpy(d_boids, m_boids, INST_NUM * sizeof(Boid), cudaMemcpyHostToDevice));
+	// Set steering direction for all boids in kernel
+	SteerBoids<<<1, INST_NUM>>>(d_boids);
+  checkCudaErrors( cudaGetLastError() );
+  // Set new positions based on the steering directions
+	MoveBoids<<<1, INST_NUM>>>(d_boids, m_DeltaTimeInSec);
+  checkCudaErrors( cudaGetLastError() );
+  checkCudaErrors( cudaMemcpy(m_boids, d_boids, INST_NUM * sizeof(Boid), cudaMemcpyDeviceToHost));
 
 	for (int i = 0; i < INST_NUM; ++i)
 	{
-
-		glm::vec3 dir = glm::vec3(m_boids[i].dir, 0.0f);
-		// std::cout << dir.x << " " << dir.y << std::endl;
-		glm::vec3 sdir = glm::vec3(m_boids[i].sdir, 0.0f);
-		// std::cout << sdir.x << " " << sdir.y << std::endl;
-
-		// turn towards the steering direction
-		float angle = glm::acos(glm::dot(dir, sdir)) * glm::min(m_DeltaTimeInSec * ANGULAR_VELOCITY, 1.0f);
-		glm::vec3 axis = glm::cross(dir, sdir);
-		if (abs(axis.z) > 0.01f) {
-			glm::vec2 ndir = glm::rotate(angle, axis) * glm::vec4(dir, 1.0f);
-			m_boids[i].dir = ndir;
-		}
-
-
-		// move in the new direction
-		m_boids[i].pos += m_boids[i].dir * VELOCITY * m_DeltaTimeInSec;
-		//TODO: bring back on other side
-		m_boids[i].pos.x = std::fmodf(m_boids[i].pos.x + 3.0f, 2.0f) - 1.0f;
-		m_boids[i].pos.y = std::fmodf(m_boids[i].pos.y + 3.0f, 2.0f) - 1.0f;
-
 		glm::mat4 world =
 			glm::translate(glm::vec3(m_boids[i].pos, 0))
 			*

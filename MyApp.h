@@ -20,17 +20,25 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_opengl.h>
 
+struct Boid {
+	glm::vec2 pos;
+	glm::vec2 dir;
+	glm::vec2 sdir; //TODO sdir doesn't need to be a part of the struct, it's only used on the GPU and is now moved unnecessarily
+};
+
+static constexpr int INST_NUM = 1000;		// How many heads we draw
+// TODO weight fucntions
+static constexpr float PERCEPTION_DISTANCE = 0.1; // in uv
+static constexpr float FOV = 180; // in degrees
+static constexpr float ANGULAR_VELOCITY = glm::half_pi<float>(); // in radians/second
+static constexpr float VELOCITY = 0.1; // in uv/second
+
 struct SUpdateInfo
 {
 	float ElapsedTimeInSec = 0.0f; // Program indulása óta eltelt idő
 	float DeltaTimeInSec   = 0.0f; // Előző Update óta eltelt idő
 };
 
-struct Boid {
-	glm::vec2 pos;
-	glm::vec2 dir;
-	glm::vec2 sdir;
-};
 
 class CMyApp
 {
@@ -55,14 +63,8 @@ protected:
 	void DrawArrayAttrInstanced();
 	
 	// Boids
-	// TODO weight fucntions
-	static constexpr float PERCEPTION_DISTANCE = 0.1; // in uv
-	static constexpr float FOV = 180; // in degrees
-	const float FOV_COS = glm::cos(glm::radians(FOV)/2);
-	static constexpr float ANGULAR_VELOCITY = glm::half_pi<float>(); // in radians/second
-	static constexpr float VELOCITY = 0.1; // in uv/second
-	void SteerBoids();
-	std::vector<Boid> m_boids;
+	Boid m_boids[INST_NUM];
+  Boid* d_boids;
 
 	// Variables
 	float m_ElapsedTimeInSec = 0.0f;
@@ -92,7 +94,6 @@ protected:
 	GLuint m_matrixBufferID = 0;
 	static constexpr GLuint uniformBlockBinding = 0;
 	
-	static constexpr int INST_NUM = 1000;		// How many heads we draw
 	std::vector<glm::mat4> m_world_matricies;	// World matrices
 
 	// Geometry initialization and termination
