@@ -129,12 +129,12 @@ void CMyApp::InitPositions()
 		m_boids[i] = Boid {
 				glm::vec2(randOffset(mt), randOffset(mt)),
 				glm::vec2(glm::cos(angle), glm::sin(angle)),
-				glm::vec2(0)
 			};
 	}
 
 	// Allocate vectors in device memory
   cudaMalloc(&d_boids, INST_NUM * sizeof(Boid));
+  cudaMalloc(&d_sdirs, INST_NUM * sizeof(glm::vec2));
 
 	m_world_matricies.assign(INST_NUM, glm::mat4(0));
 
@@ -227,6 +227,7 @@ void CMyApp::Clean()
 	CleanGeometry();
 
 	cudaFree(d_boids);
+	cudaFree(d_sdirs);
 }
 
 void CMyApp::Update( const SUpdateInfo& updateInfo )
@@ -235,11 +236,11 @@ void CMyApp::Update( const SUpdateInfo& updateInfo )
 	m_DeltaTimeInSec = updateInfo.DeltaTimeInSec;
 }
 
-__global__ void SteerBoids(Boid* boids)
+__global__ void SteerBoids(Boid* boids, glm::vec2* sdirs)
 {
 	int i = threadIdx.x;
 	const float FOV_COS = std::cos((FOV * M_PI / 180.0f) / 2.0f);
-	boids[i].sdir = boids[i].dir;
+	sdirs[i] = boids[i].dir;
 
 	for (int j = 0; j < INST_NUM; j++)
 	{
@@ -260,7 +261,7 @@ __global__ void SteerBoids(Boid* boids)
 
 
 		// TODO weight functions
-		boids[i].sdir +=
+		sdirs[i] +=
 
 		// Separation
 		-to_other_normalized * (glm::sqrt(PERCEPTION_DISTANCE / dst - 1.0f) * 2.5f) +
@@ -272,15 +273,15 @@ __global__ void SteerBoids(Boid* boids)
 		to_other_normalized;
 	}
 
-	boids[i].sdir = glm::normalize(boids[i].sdir);
+	sdirs[i] = glm::normalize(sdirs[i]);
 }
 
 
-__global__ void MoveBoids(Boid* boids, float DeltaTimeInSec)
+__global__ void MoveBoids(Boid* boids, glm::vec2* sdirs, float DeltaTimeInSec)
 {
 	int i = threadIdx.x;
 	glm::vec3 dir = glm::vec3(boids[i].dir, 0.0f);
-	glm::vec3 sdir = glm::vec3(boids[i].sdir, 0.0f);
+	glm::vec3 sdir = glm::vec3(sdirs[i], 0.0f);
 
 	// turn towards the steering direction
 	float angle = glm::acos(glm::dot(dir, sdir)) * glm::min(DeltaTimeInSec * ANGULAR_VELOCITY, 1.0f);
@@ -305,10 +306,10 @@ void CMyApp::DrawNoInstance()
 
   checkCudaErrors( cudaMemcpy(d_boids, m_boids, INST_NUM * sizeof(Boid), cudaMemcpyHostToDevice));
 	// Set steering direction for all boids in kernel
-	SteerBoids<<<1, INST_NUM>>>(d_boids);
+	SteerBoids<<<1, INST_NUM>>>(d_boids, d_sdirs);
   checkCudaErrors( cudaGetLastError() );
   // Set new positions based on the steering directions
-	MoveBoids<<<1, INST_NUM>>>(d_boids, m_DeltaTimeInSec);
+	MoveBoids<<<1, INST_NUM>>>(d_boids, d_sdirs, m_DeltaTimeInSec);
   checkCudaErrors( cudaGetLastError() );
   checkCudaErrors( cudaMemcpy(m_boids, d_boids, INST_NUM * sizeof(Boid), cudaMemcpyDeviceToHost));
 

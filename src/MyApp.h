@@ -23,7 +23,6 @@
 struct Boid {
 	glm::vec2 pos;
 	glm::vec2 dir;
-	glm::vec2 sdir; //TODO sdir doesn't need to be a part of the struct, it's only used on the GPU and is now moved unnecessarily
 };
 
 static constexpr int INST_NUM = 1000;		// How many heads we draw
@@ -66,6 +65,7 @@ protected:
 	// Boids
 	Boid m_boids[INST_NUM];
   Boid* d_boids;
+	glm::vec2* d_sdirs;
 
 	// Variables
 	float m_ElapsedTimeInSec = 0.0f;
