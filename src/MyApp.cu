@@ -133,10 +133,12 @@ void CMyApp::InitPositions()
 	}
 
 	// Allocate vectors in device memory
-  cudaMalloc(&d_boids, INST_NUM * sizeof(Boid));
-  cudaMalloc(&d_sdirs, INST_NUM * sizeof(glm::vec2));
+  checkCudaErrors( cudaMalloc(&d_boids, INST_NUM * sizeof(Boid)));
+  checkCudaErrors( cudaMalloc(&d_sdirs, INST_NUM * sizeof(glm::vec2)));
+	checkCudaErrors( cudaMalloc(&d_world_matrices, INST_NUM * sizeof(glm::mat4)));
+  
+  checkCudaErrors( cudaMemcpy(d_boids, m_boids, INST_NUM * sizeof(Boid), cudaMemcpyHostToDevice));
 
-	m_world_matricies.assign(INST_NUM, glm::mat4(0));
 
 	/*
 	// We create one buffer id
@@ -277,7 +279,7 @@ __global__ void SteerBoids(Boid* boids, glm::vec2* sdirs)
 }
 
 
-__global__ void MoveBoids(Boid* boids, glm::vec2* sdirs, float DeltaTimeInSec)
+__global__ void MoveBoids(Boid* boids, glm::vec2* sdirs, glm::mat4* world_matrices, float DeltaTimeInSec)
 {
 	int i = threadIdx.x;
 	glm::vec3 dir = glm::vec3(boids[i].dir, 0.0f);
@@ -296,6 +298,13 @@ __global__ void MoveBoids(Boid* boids, glm::vec2* sdirs, float DeltaTimeInSec)
 	boids[i].pos += boids[i].dir * VELOCITY * DeltaTimeInSec;
 	boids[i].pos.x = std::fmodf(boids[i].pos.x + 3.0f, 2.0f) - 1.0f;
 	boids[i].pos.y = std::fmodf(boids[i].pos.y + 3.0f, 2.0f) - 1.0f;
+
+	world_matrices[i] =
+		glm::translate(glm::vec3(boids[i].pos, 0))
+		*
+		glm::rotate(atan2(boids[i].dir.y, boids[i].dir.x), glm::vec3(0, 0, 1))
+		*
+		glm::scale(glm::vec3(0.01));
 }
 
 void CMyApp::DrawNoInstance()
@@ -304,27 +313,19 @@ void CMyApp::DrawNoInstance()
 
 	glBindVertexArray(m_BoidGPU.vaoID);
 
-  checkCudaErrors( cudaMemcpy(d_boids, m_boids, INST_NUM * sizeof(Boid), cudaMemcpyHostToDevice));
 	// Set steering direction for all boids in kernel
 	SteerBoids<<<1, INST_NUM>>>(d_boids, d_sdirs);
   checkCudaErrors( cudaGetLastError() );
   // Set new positions based on the steering directions
-	MoveBoids<<<1, INST_NUM>>>(d_boids, d_sdirs, m_DeltaTimeInSec);
+	MoveBoids<<<1, INST_NUM>>>(d_boids, d_sdirs, d_world_matrices, m_DeltaTimeInSec);
   checkCudaErrors( cudaGetLastError() );
-  checkCudaErrors( cudaMemcpy(m_boids, d_boids, INST_NUM * sizeof(Boid), cudaMemcpyDeviceToHost));
+  checkCudaErrors( cudaMemcpy(m_world_matrices, d_world_matrices, INST_NUM * sizeof(glm::mat4), cudaMemcpyDeviceToHost));
 
 	for (int i = 0; i < INST_NUM; ++i)
 	{
-		glm::mat4 world =
-			glm::translate(glm::vec3(m_boids[i].pos, 0))
-			*
-			glm::rotate(atan2(m_boids[i].dir.y, m_boids[i].dir.x), glm::vec3(0, 0, 1))
-			*
-			glm::scale(glm::vec3(0.01));
 
 	// TODO mat3:
-		glUniformMatrix4fv( ul("world"), 1, GL_FALSE, glm::value_ptr(world));
-		//glUniformMatrix4fv( ul("world"), 1, GL_FALSE, glm::value_ptr(m_world_matricies[i]));
+		glUniformMatrix4fv( ul("world"), 1, GL_FALSE, glm::value_ptr(m_world_matrices[i]));
 		glDrawElements(GL_TRIANGLES, m_BoidGPU.count, GL_UNSIGNED_INT, 0);
 	}
 

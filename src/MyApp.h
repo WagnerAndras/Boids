@@ -66,6 +66,8 @@ protected:
 	Boid m_boids[INST_NUM];
   Boid* d_boids;
 	glm::vec2* d_sdirs;
+	glm::mat4 m_world_matrices[INST_NUM];
+	glm::mat4* d_world_matrices;
 
 	// Variables
 	float m_ElapsedTimeInSec = 0.0f;
@@ -95,8 +97,6 @@ protected:
 	GLuint m_matrixBufferID = 0;
 	static constexpr GLuint uniformBlockBinding = 0;
 	
-	std::vector<glm::mat4> m_world_matricies;	// World matrices
-
 	// Geometry initialization and termination
 	void InitPositions();
 	void InitAttributeMode();
