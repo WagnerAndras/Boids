@@ -6,9 +6,9 @@
 
 #include "device_launch_parameters.h"
 #include <cuda_runtime.h>
+#include <cuda_gl_interop.h>
 #include "includes/helper_cuda.h"
 
-//#include <__clang_cuda_builtin_vars.h>
 #include <cmath>
 #include <glm/common.hpp>
 #include <glm/exponential.hpp>
@@ -52,40 +52,16 @@ void CMyApp::SetupDebugCallback()
 
 void CMyApp::InitShaders()
 {
-	m_programNoInstanceID = glCreateProgram();
-	ProgramBuilder{ m_programNoInstanceID }
+	m_programBoidID = glCreateProgram();
+	ProgramBuilder{ m_programBoidID }
 		.ShaderStage(GL_VERTEX_SHADER, "Boid.vert")
 		//.ShaderStage(GL_FRAGMENT_SHADER, "Boid.frag")
 		.Link();
-
-/*
-	m_programUboInstanceID = glCreateProgram();
-	ProgramBuilder{ m_programUboInstanceID }
-		.ShaderStage(GL_VERTEX_SHADER, "Vert_InstancedUBO.vert")
-		.ShaderStage(GL_FRAGMENT_SHADER, "Boid.frag")
-		.Link();
-
-	// Get the index of a named uniform block
-	GLuint blockIndex = glGetUniformBlockIndex(	m_programUboInstanceID, // Program ID
-												"m_ubo_buffer");		// Uniform block name
-	// We assign a binding point to an active uniform block
-	glUniformBlockBinding(	m_programUboInstanceID,	// Program ID
-							blockIndex,				// The index of the active uniform block within program whose binding to assign.
-							uniformBlockBinding);	// Specifies the binding point to which to bind the uniform block with index uniformBlockIndex within program.
-
-	m_programArrayAttrInstanceID = glCreateProgram();
-	ProgramBuilder{ m_programArrayAttrInstanceID }
-		.ShaderStage(GL_VERTEX_SHADER, "Vert_InstancedAttr.vert")
-		.ShaderStage(GL_FRAGMENT_SHADER, "Boid.frag")
-		.Link();
-*/
 }
 
 void CMyApp::CleanShaders()
 {
-	glDeleteProgram(m_programArrayAttrInstanceID);
-	//glDeleteProgram(m_programNoInstanceID);
-	//glDeleteProgram(m_programUboInstanceID);
+	glDeleteProgram(m_programBoidID);
 }
 
 
@@ -115,6 +91,9 @@ void CMyApp::CleanGeometry()
 
 void CMyApp::InitPositions()
 {
+  // Explicitly set device 0
+  cudaSetDevice(0);
+
 	// Initializing the Boid positions and rotations 
 	std::random_device r; // seed source
 	std::seed_seq seeds{r(), r(), r(), r(), r(), r(), r(), r()};
@@ -123,6 +102,7 @@ void CMyApp::InitPositions()
 	std::uniform_real_distribution<float> randAngle(-glm::pi<float>(), glm::pi<float>());
 	
 	// initialize each boid with a posiotion and an angle
+	Boid m_boids[INST_NUM];
 	for (int i = 0; i < INST_NUM; ++i)
 	{
 		float angle = randAngle(mt);
@@ -133,71 +113,23 @@ void CMyApp::InitPositions()
 	}
 
 	// Allocate vectors in device memory
-  checkCudaErrors( cudaMalloc(&d_boids, INST_NUM * sizeof(Boid)));
-  checkCudaErrors( cudaMalloc(&d_sdirs, INST_NUM * sizeof(glm::vec2)));
-	checkCudaErrors( cudaMalloc(&d_world_matrices, INST_NUM * sizeof(glm::mat4)));
+  checkCudaErrors( cudaMalloc(&d_boids, INST_NUM * sizeof(Boid)) );
+  checkCudaErrors( cudaMalloc(&d_sdirs, INST_NUM * sizeof(glm::vec2)) );
   
-  checkCudaErrors( cudaMemcpy(d_boids, m_boids, INST_NUM * sizeof(Boid), cudaMemcpyHostToDevice));
+  // Put initial positions on GPU
+  checkCudaErrors( cudaMemcpy(d_boids, m_boids, INST_NUM * sizeof(Boid), cudaMemcpyHostToDevice) );
 
-
-	/*
-	// We create one buffer id
-	glCreateBuffers(1, &m_uboID);
-  glNamedBufferData( m_uboID, uboSizeBytes, nullptr, GL_DYNAMIC_DRAW );
-	// Bind range within a buffer object to an indexed buffer target
-	glBindBufferRange(	GL_UNIFORM_BUFFER,	// Target
-						uniformBlockBinding,		// Index
-						m_uboID,			// Buffer ID
-						0,					// Offset
-						uboSizeBytes);		// Size in bytes
-	*/
+	// world matrix buffer for interop
+  // Create buffer object and register it with CUDA
+  glGenBuffers(1, &world_matricesBO);
+  glBindBuffer(GL_ARRAY_BUFFER, world_matricesBO);
+  glBufferData(GL_ARRAY_BUFFER, INST_NUM * sizeof(glm::mat4), 0, GL_DYNAMIC_DRAW);
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
+  checkCudaErrors( cudaGraphicsGLRegisterBuffer(
+  			&world_matricesBO_CUDA,
+  			world_matricesBO,
+  			cudaGraphicsMapFlagsWriteDiscard) );
 }
-
-/*
-void CMyApp::InitAttributeMode()
-{
-	// TODO: vec3, mat3
-	static constexpr int vec4Size = sizeof(glm::vec4);
-	static constexpr int mat4Size = sizeof(glm::mat4);
-
-	// To help setup the new vao attributes
-	const auto addAttrib = [&](int binding, int attr)
-	{
-		// We can't put our matrix into one attribute, because only max 4 components are allowed per attribute,
-		// so we need four attribute per 4x4matrix
-		for ( int col_i = 0; col_i < 4; col_i++ )
-		{
-
-			glEnableVertexArrayAttrib( m_BoidGPU.vaoID, attr + col_i );
-			glVertexArrayAttribBinding( m_BoidGPU.vaoID, attr + col_i, binding ); // melyik VBO-ból olvassa az adatokat
-			glVertexArrayAttribFormat( m_BoidGPU.vaoID, attr + col_i, 4, GL_FLOAT, GL_FALSE, col_i * vec4Size );
-
-		}
-	};
-
-	// We add another buffer to our VAO
-
-	glCreateBuffers(1, &m_matrixBufferID);
-  glNamedBufferData( m_matrixBufferID, INST_NUM * mat4Size, nullptr, GL_STATIC_DRAW ); // This allocates the memory on GPU
-	glNamedBufferSubData(m_matrixBufferID, 0, INST_NUM * mat4Size, m_world_matricies.data());
-
-	glVertexArrayVertexBuffer( m_BoidGPU.vaoID, 1, m_matrixBufferID, 0, mat4Size );
-
-	// If divisor is zero, the attributes in binding indexed VBO advances once per vertex. If divisor is non-zero,
-	// the attribute advances once per divisor instances of the set(s) of vertices being rendered
-	glVertexArrayBindingDivisor(m_BoidGPU.vaoID, // VAO
-								 1,	// Index
-								 1 );// Divisor
-	//glVertexArrayBindingDivisor(m_BoidGPU.vaoID, // VAO
-	//							 2,	// Index
-	//							 1 );// Divisor
-	
-
-	addAttrib(1,3);
-	//addAttrib(2,7);
-}
-*/
-
 
 bool CMyApp::Init()
 {
@@ -222,14 +154,14 @@ bool CMyApp::Init()
 
 void CMyApp::Clean()
 {
-	glDeleteBuffers(1, &m_uboID);
-	glDeleteBuffers(1, &m_matrixBufferID);
+	glDeleteBuffers(1, &world_matricesBO);
 	
 	CleanShaders();
 	CleanGeometry();
 
 	cudaFree(d_boids);
 	cudaFree(d_sdirs);
+	cudaGraphicsUnregisterResource(world_matricesBO_CUDA);
 }
 
 void CMyApp::Update( const SUpdateInfo& updateInfo )
@@ -307,102 +239,6 @@ __global__ void MoveBoids(Boid* boids, glm::vec2* sdirs, glm::mat4* world_matric
 		glm::scale(glm::vec3(0.01));
 }
 
-void CMyApp::DrawNoInstance()
-{
-	glUseProgram(m_programNoInstanceID);
-
-	glBindVertexArray(m_BoidGPU.vaoID);
-
-	// Set steering direction for all boids in kernel
-	SteerBoids<<<1, INST_NUM>>>(d_boids, d_sdirs);
-  checkCudaErrors( cudaGetLastError() );
-  // Set new positions based on the steering directions
-	MoveBoids<<<1, INST_NUM>>>(d_boids, d_sdirs, d_world_matrices, m_DeltaTimeInSec);
-  checkCudaErrors( cudaGetLastError() );
-  checkCudaErrors( cudaMemcpy(m_world_matrices, d_world_matrices, INST_NUM * sizeof(glm::mat4), cudaMemcpyDeviceToHost));
-
-	for (int i = 0; i < INST_NUM; ++i)
-	{
-
-	// TODO mat3:
-		glUniformMatrix4fv( ul("world"), 1, GL_FALSE, glm::value_ptr(m_world_matrices[i]));
-		glDrawElements(GL_TRIANGLES, m_BoidGPU.count, GL_UNSIGNED_INT, 0);
-	}
-
-	glBindVertexArray(0);
-	glUseProgram(0);
-	
-	// exit(0);
-}
-
-/*
-void CMyApp::DrawUboInstance()
-{
-	glUseProgram(m_programUboInstanceID);
-	glBindVertexArray(m_BoidGPU.vaoID);
-
-	glUniformMatrix4fv( ul("viewProj"), 1, GL_FALSE, glm::value_ptr(m_camera.GetViewProj()));
-	glUniform1i( ul("textureImage"), 0);
-
-	glBindBuffer(GL_UNIFORM_BUFFER, m_uboID);
-	
-
-	// Fill the UBO with data then draw, and repeat until every object is drawn 
-	for (int rendered_total = 0; rendered_total < INST_NUM;)
-	{
-		int to_render = std::min(uboSize, INST_NUM - rendered_total);
-
-
-		// TODO: mat3
-		std::vector<glm::mat4> data(2 * uboSize);
-		// Similar to memcpy
-		std::copy(m_world_matricies.begin() + rendered_total,	m_world_matricies.begin() + rendered_total + to_render,		data.begin());
-
-		// Set buffer data, we use subdata because we don't want to reallocate the buffer, we just want to set the data
-		glBufferSubData(GL_UNIFORM_BUFFER,//m_uboID 				// Target
-						0,							// Offset
-						uboSizeBytes,				// Size in bytes
-						(const void*)data.data());	// Pointer to the data
-
-		
-		// We draw multiple instances of Suzzanne with one call
-		glDrawElementsInstanced(GL_TRIANGLES,		// Primitive type
-								m_BoidGPU.count,	// Count
-								GL_UNSIGNED_INT,	// Index buffer data type
-								0,					// Offset in the index buffer
-								to_render);			// How many instance do we draw? (Only new compared to glDrawElements)
-
-		rendered_total += to_render;
-	}
-	// We can unbind them
-	glBindVertexArray(0);
-
-	glBindBuffer(GL_UNIFORM_BUFFER, 0);
-	glUseProgram(0);
-}
-*/
-
-/*
-void CMyApp::DrawArrayAttrInstanced()
-{
-	glBindVertexArray( m_BoidGPU.vaoID );
-
-	// We don't have to set out World and WorldIT matrices, 
-	// because they are shipped by the VAO
-
-	glUseProgram(m_programArrayAttrInstanceID);
-
-	// We draw multiple instances of Suzzanne with one call
-	glDrawElementsInstanced(GL_TRIANGLES,	// Primitive type
-		m_BoidGPU.count,	// Count
-		GL_UNSIGNED_INT,	// Index buffer data type
-		0,					// Offset in the index buffer
-		INST_NUM);			// How many instance do we draw? (Only new compared to glDrawElements)
-
-	glBindVertexArray(0);
-}
-*/
-
 void CMyApp::Render()
 {
 	// töröljük a frampuffert (GL_COLOR_BUFFER_BIT)...
@@ -410,9 +246,42 @@ void CMyApp::Render()
 	//glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 	glClear(GL_COLOR_BUFFER_BIT);
 
-	DrawNoInstance();
-	//DrawUboInstance();
-	//DrawArrayAttrInstanced();
+	// Set steering direction for all boids in kernel
+	SteerBoids<<<1, INST_NUM>>>(d_boids, d_sdirs);
+  checkCudaErrors( cudaGetLastError()  );
+
+  // Map buffer object
+	glm::mat4* world_matrices;
+	checkCudaErrors( cudaGraphicsMapResources(1, &world_matricesBO_CUDA, 0) );
+  
+  size_t num_bytes;
+  checkCudaErrors( cudaGraphicsResourceGetMappedPointer((void**)&world_matrices,
+                                       &num_bytes,
+                                       world_matricesBO_CUDA));
+
+  // Execute kernel
+  // Set new positions based on the steering directions
+	MoveBoids<<<1, INST_NUM>>>(d_boids, d_sdirs, world_matrices, m_DeltaTimeInSec);
+  checkCudaErrors( cudaGetLastError()  );
+
+  // Unmap buffer object
+  checkCudaErrors( cudaGraphicsUnmapResources(1, &world_matricesBO_CUDA, 0) );
+	
+	glUseProgram(m_programBoidID);
+	glBindVertexArray(m_BoidGPU.vaoID);
+	glBindBuffer(GL_ARRAY_BUFFER, world_matricesBO);
+
+	for (int i = 0; i < 4; ++i) {
+    	glEnableVertexAttribArray(1 + i);
+    	glVertexAttribPointer(1 + i, 4, GL_FLOAT, GL_FALSE, sizeof(glm::mat4), (void*)(sizeof(glm::vec4) * i));
+    	glVertexAttribDivisor(1 + i, 1); // Advance once per instance
+	}
+
+	glDrawElementsInstanced(GL_TRIANGLES, m_BoidGPU.count, GL_UNSIGNED_INT, 0, INST_NUM);
+
+	glBindBuffer(GL_ARRAY_BUFFER, 0);
+	glBindVertexArray(0);
+	glUseProgram(0);
 }
 
 void CMyApp::RenderGUI()

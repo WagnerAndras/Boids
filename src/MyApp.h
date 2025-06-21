@@ -58,16 +58,12 @@ public:
 
 protected:
 	void SetupDebugCallback();
-	void DrawNoInstance();
-	void DrawUboInstance();
-	void DrawArrayAttrInstanced();
 	
 	// Boids
-	Boid m_boids[INST_NUM];
   Boid* d_boids;
 	glm::vec2* d_sdirs;
-	glm::mat4 m_world_matrices[INST_NUM];
-	glm::mat4* d_world_matrices;
+	GLuint world_matricesBO = 0;
+	struct cudaGraphicsResource* world_matricesBO_CUDA;
 
 	// Variables
 	float m_ElapsedTimeInSec = 0.0f;
@@ -81,10 +77,7 @@ protected:
 	// Shader variables
 	static constexpr int uboSize = 100;	// How many objects we draw with one draw call
 	static constexpr int uboSizeBytes = uboSize * 2 * sizeof(glm::mat4);
-	GLuint m_programID = 0;		  // shaderek programja
-	GLuint m_programNoInstanceID = 0;
-	GLuint m_programUboInstanceID = 0;
-	GLuint m_programArrayAttrInstanceID = 0;
+	GLuint m_programBoidID = 0;
 
 
 	// Shader initialization and termination
@@ -93,13 +86,9 @@ protected:
 	
 	// Geometry variables
 	OGLObject m_BoidGPU = {};
-	GLuint m_uboID = 0;
-	GLuint m_matrixBufferID = 0;
-	static constexpr GLuint uniformBlockBinding = 0;
 	
 	// Geometry initialization and termination
 	void InitPositions();
-	void InitAttributeMode();
 	void InitGeometry();
 	void CleanGeometry();
 
