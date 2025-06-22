@@ -55,7 +55,7 @@ void CMyApp::InitShaders()
 	m_programBoidID = glCreateProgram();
 	ProgramBuilder{ m_programBoidID }
 		.ShaderStage(GL_VERTEX_SHADER, "Boid.vert")
-		//.ShaderStage(GL_FRAGMENT_SHADER, "Boid.frag")
+		.ShaderStage(GL_FRAGMENT_SHADER, "Boid.frag")
 		.Link();
 }
 
