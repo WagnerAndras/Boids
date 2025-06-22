@@ -49,36 +49,14 @@ void CMyApp::InitShaders()
 	m_programNoInstanceID = glCreateProgram();
 	ProgramBuilder{ m_programNoInstanceID }
 		.ShaderStage(GL_VERTEX_SHADER, "Boid.vert")
-		//.ShaderStage(GL_FRAGMENT_SHADER, "Boid.frag")
-		.Link();
-
-/*
-	m_programUboInstanceID = glCreateProgram();
-	ProgramBuilder{ m_programUboInstanceID }
-		.ShaderStage(GL_VERTEX_SHADER, "Vert_InstancedUBO.vert")
 		.ShaderStage(GL_FRAGMENT_SHADER, "Boid.frag")
 		.Link();
-
-	// Get the index of a named uniform block
-	GLuint blockIndex = glGetUniformBlockIndex(	m_programUboInstanceID, // Program ID
-												"m_ubo_buffer");		// Uniform block name
-	// We assign a binding point to an active uniform block
-	glUniformBlockBinding(	m_programUboInstanceID,	// Program ID
-							blockIndex,				// The index of the active uniform block within program whose binding to assign.
-							uniformBlockBinding);	// Specifies the binding point to which to bind the uniform block with index uniformBlockIndex within program.
-
-	m_programArrayAttrInstanceID = glCreateProgram();
-	ProgramBuilder{ m_programArrayAttrInstanceID }
-		.ShaderStage(GL_VERTEX_SHADER, "Vert_InstancedAttr.vert")
-		.ShaderStage(GL_FRAGMENT_SHADER, "Boid.frag")
-		.Link();
-*/
 }
 
 void CMyApp::CleanShaders()
 {
-	glDeleteProgram(m_programArrayAttrInstanceID);
-	//glDeleteProgram(m_programNoInstanceID);
+	glDeleteProgram(m_programNoInstanceID);
+	//glDeleteProgram(m_programArrayAttrInstanceID);
 	//glDeleteProgram(m_programUboInstanceID);
 }
 
