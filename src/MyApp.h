@@ -25,13 +25,6 @@ struct Boid {
 	glm::vec2 dir;
 };
 
-static constexpr int INST_NUM = 1000;		// How many heads we draw
-// TODO weight fucntions
-static constexpr float PERCEPTION_DISTANCE = 0.1; // in uv
-static constexpr float FOV = 180; // in degrees
-static constexpr float ANGULAR_VELOCITY = glm::half_pi<float>(); // in radians/second
-static constexpr float VELOCITY = 0.1; // in uv/second
-
 struct SUpdateInfo
 {
 	float ElapsedTimeInSec = 0.0f; // Program indulása óta eltelt idő
@@ -47,6 +40,7 @@ public:
 
 	bool Init();
 	void Clean();
+	void Restart();
 
 	void Update( const SUpdateInfo& );
 	void Render();
@@ -66,17 +60,23 @@ protected:
 	struct cudaGraphicsResource* world_matricesBO_CUDA;
 
 	// Variables
+	
+	// TODO weight functions
+	int m_inst_num = 1000;		// how many heads we draw
+	float m_half_fov_cos = 0.0f;
+	float m_perception_distance = 0.1; // in uv
+	float m_angular_velocity = glm::half_pi<float>(); // in radians/second
+	float m_velocity = 0.1; // in uv/second
+	
 	float m_ElapsedTimeInSec = 0.0f;
 	float m_DeltaTimeInSec = 0.0f;
-	
+
 	// Camera
 	Camera m_camera;
 	
 	// OpenGL
 
 	// Shader variables
-	static constexpr int uboSize = 100;	// How many objects we draw with one draw call
-	static constexpr int uboSizeBytes = uboSize * 2 * sizeof(glm::mat4);
 	GLuint m_programBoidID = 0;
 
 
