@@ -1,4 +1,5 @@
 #include "MyApp.h"
+#include "SDL_log.h"
 #include "includes/GLUtils.hpp"
 #include "includes/SDL_GLDebugMessageCallback.h"
 #include "includes/ProgramBuilder.h"
@@ -24,6 +25,7 @@
 #include <imgui.h>
 
 #include <glm/trigonometric.hpp>
+#include <iostream>
 #include <vector>
 #include <random>
 
@@ -52,6 +54,8 @@ void CMyApp::SetupDebugCallback()
 
 void CMyApp::InitShaders()
 {
+	if (m_programBoidID != 0) return; // don't reinitialize
+
 	m_programBoidID = glCreateProgram();
 	ProgramBuilder{ m_programBoidID }
 		.ShaderStage(GL_VERTEX_SHADER, "Boid.vert")
@@ -67,6 +71,8 @@ void CMyApp::CleanShaders()
 
 void CMyApp::InitGeometry()
 {
+	if (m_BoidGPU.count > 0) return; // don't reinitialize
+
 	MeshObject<glm::vec2> m_BoidMeshCPU;
 
 	// Simple triangle
@@ -102,8 +108,8 @@ void CMyApp::InitPositions()
 	std::uniform_real_distribution<float> randAngle(-glm::pi<float>(), glm::pi<float>());
 	
 	// initialize each boid with a posiotion and an angle
-	Boid m_boids[INST_NUM];
-	for (int i = 0; i < INST_NUM; ++i)
+	Boid m_boids[m_inst_num];
+	for (int i = 0; i < m_inst_num; ++i)
 	{
 		float angle = randAngle(mt);
 		m_boids[i] = Boid {
@@ -113,17 +119,17 @@ void CMyApp::InitPositions()
 	}
 
 	// Allocate vectors in device memory
-  checkCudaErrors( cudaMalloc(&d_boids, INST_NUM * sizeof(Boid)) );
-  checkCudaErrors( cudaMalloc(&d_sdirs, INST_NUM * sizeof(glm::vec2)) );
+  checkCudaErrors( cudaMalloc(&d_boids, m_inst_num * sizeof(Boid)) );
+  checkCudaErrors( cudaMalloc(&d_sdirs, m_inst_num * sizeof(glm::vec2)) );
   
   // Put initial positions on GPU
-  checkCudaErrors( cudaMemcpy(d_boids, m_boids, INST_NUM * sizeof(Boid), cudaMemcpyHostToDevice) );
+  checkCudaErrors( cudaMemcpy(d_boids, m_boids, m_inst_num * sizeof(Boid), cudaMemcpyHostToDevice) );
 
 	// world matrix buffer for interop
   // Create buffer object and register it with CUDA
   glGenBuffers(1, &world_matricesBO);
   glBindBuffer(GL_ARRAY_BUFFER, world_matricesBO);
-  glBufferData(GL_ARRAY_BUFFER, INST_NUM * sizeof(glm::mat4), 0, GL_DYNAMIC_DRAW);
+  glBufferData(GL_ARRAY_BUFFER, m_inst_num * sizeof(glm::mat4), 0, GL_DYNAMIC_DRAW);
   glBindBuffer(GL_ARRAY_BUFFER, 0);
   checkCudaErrors( cudaGraphicsGLRegisterBuffer(
   			&world_matricesBO_CUDA,
@@ -142,7 +148,6 @@ bool CMyApp::Init()
 	InitShaders();
 	InitGeometry();
 	InitPositions();
-	//InitAttributeMode();
 
 	// Other
 
@@ -164,16 +169,28 @@ void CMyApp::Clean()
 	cudaGraphicsUnregisterResource(world_matricesBO_CUDA);
 }
 
+void CMyApp::Restart()
+{
+	glDeleteBuffers(1, &world_matricesBO);
+	
+	cudaFree(d_boids);
+	cudaFree(d_sdirs);
+	cudaGraphicsUnregisterResource(world_matricesBO_CUDA);
+
+	Init();
+}
+
 void CMyApp::Update( const SUpdateInfo& updateInfo )
 {
 	m_ElapsedTimeInSec = updateInfo.ElapsedTimeInSec;
 	m_DeltaTimeInSec = updateInfo.DeltaTimeInSec;
 }
 
-__global__ void SteerBoids(Boid* boids, glm::vec2* sdirs)
+__global__ void SteerBoids(Boid* boids, glm::vec2* sdirs, int INST_NUM, float HALF_FOV_COS, float PERCEPTION_DISTANCE)
 {
-	int i = threadIdx.x;
-	const float FOV_COS = std::cos((FOV * M_PI / 180.0f) / 2.0f);
+	int i = threadIdx.x; // Thread number
+
+	boids[i].dir = glm::normalize(boids[i].dir);
 	sdirs[i] = boids[i].dir;
 
 	for (int j = 0; j < INST_NUM; j++)
@@ -191,7 +208,7 @@ __global__ void SteerBoids(Boid* boids, glm::vec2* sdirs)
 		glm::vec2 to_other_normalized = to_other / dst;
 
 		// see if it's in the field of view
-		if (glm::dot(boids[i].dir, to_other_normalized) < FOV_COS) continue;
+		if (glm::dot(boids[i].dir, to_other_normalized) <= HALF_FOV_COS) continue;
 
 
 		// TODO weight functions
@@ -211,7 +228,7 @@ __global__ void SteerBoids(Boid* boids, glm::vec2* sdirs)
 }
 
 
-__global__ void MoveBoids(Boid* boids, glm::vec2* sdirs, glm::mat4* world_matrices, float DeltaTimeInSec)
+__global__ void MoveBoids(Boid* boids, glm::vec2* sdirs, glm::mat4* world_matrices, float ANGULAR_VELOCITY, float VELOCITY, float DeltaTimeInSec)
 {
 	int i = threadIdx.x;
 	glm::vec3 dir = glm::vec3(boids[i].dir, 0.0f);
@@ -247,7 +264,8 @@ void CMyApp::Render()
 	glClear(GL_COLOR_BUFFER_BIT);
 
 	// Set steering direction for all boids in kernel
-	SteerBoids<<<1, INST_NUM>>>(d_boids, d_sdirs);
+	// TODO block calls
+	SteerBoids<<<1, m_inst_num>>>(d_boids, d_sdirs, m_inst_num, m_half_fov_cos, m_perception_distance);
   checkCudaErrors( cudaGetLastError()  );
 
   // Map buffer object
@@ -261,7 +279,7 @@ void CMyApp::Render()
 
   // Execute kernel
   // Set new positions based on the steering directions
-	MoveBoids<<<1, INST_NUM>>>(d_boids, d_sdirs, world_matrices, m_DeltaTimeInSec);
+	MoveBoids<<<1, m_inst_num>>>(d_boids, d_sdirs, world_matrices, m_angular_velocity, m_velocity, m_DeltaTimeInSec);
   checkCudaErrors( cudaGetLastError()  );
 
   // Unmap buffer object
@@ -277,7 +295,7 @@ void CMyApp::Render()
     	glVertexAttribDivisor(1 + i, 1); // Advance once per instance
 	}
 
-	glDrawElementsInstanced(GL_TRIANGLES, m_BoidGPU.count, GL_UNSIGNED_INT, 0, INST_NUM);
+	glDrawElementsInstanced(GL_TRIANGLES, m_BoidGPU.count, GL_UNSIGNED_INT, 0, m_inst_num);
 
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
 	glBindVertexArray(0);
@@ -287,7 +305,7 @@ void CMyApp::Render()
 void CMyApp::RenderGUI()
 {
 	// ImGui::ShowDemoWindow();
-	if (ImGui::Begin("Instancing"))
+	if (ImGui::Begin("FPS"))
 	{
 		const float refresh_time = 0.5f;
 		static float timer = 0;
@@ -305,6 +323,29 @@ void CMyApp::RenderGUI()
 		}
 		ImGui::Text("FPS: %d", static_cast<int>(fps));
 		ImGui::Text("ms %f", avgFrameTime);
+	}
+	ImGui::End();
+	
+	if (ImGui::Begin("Settings"))
+	{
+		if (ImGui::Button("Restart"))
+		{
+			CMyApp::Restart();
+		}
+// the number of boids (5%)
+// the FOV of boids (10%)
+		static float fov = 180.0f; // in degrees
+		if (ImGui::SliderFloat("FOV", &fov, 0.0f, 360.0f))
+		{
+			m_half_fov_cos = std::cos((fov * 0.5f * M_PI / 180.0f));
+		}
+		ImGui::SliderFloat("Perception distance", &m_perception_distance, 0.0f, 1.0f);
+
+// the weights of boid rules: (5%)
+// separation
+// alignment
+// cohesion
+// the type of initial distribution of boids (e.g., uniform randomization) (10%).
 	}
 	ImGui::End();
 }
