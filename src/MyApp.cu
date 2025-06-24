@@ -186,13 +186,15 @@ void CMyApp::Update( const SUpdateInfo& updateInfo )
 	m_DeltaTimeInSec = updateInfo.DeltaTimeInSec;
 }
 
-__global__ void SteerBoids(Boid* boids, glm::vec2* sdirs, int INST_NUM, float HALF_FOV_COS, float PERCEPTION_DISTANCE)
+__global__ void SteerBoids(Boid* boids, glm::vec2* sdirs, int INST_NUM, SteeringParams sp)
 {
 	int i = threadIdx.x; // Thread number
 
 	boids[i].dir = glm::normalize(boids[i].dir);
-	sdirs[i] = boids[i].dir;
 
+	glm::vec2 separation = glm::vec2(0.0f);
+	glm::vec2 alignment = glm::vec2(0.0f);
+	glm::vec2 cohesion = glm::vec2(0.0f);
 	for (int j = 0; j < INST_NUM; j++)
 	{
 
@@ -203,39 +205,41 @@ __global__ void SteerBoids(Boid* boids, glm::vec2* sdirs, int INST_NUM, float HA
 		float dst = glm::length(to_other);
 
 		// see if it's inside the perception radius
-		if (dst > PERCEPTION_DISTANCE) continue;
+		if (dst > sp.perception_distance) continue;
 
 		glm::vec2 to_other_normalized = to_other / dst;
 
 		// see if it's in the field of view
-		if (glm::dot(boids[i].dir, to_other_normalized) <= HALF_FOV_COS) continue;
+		if (glm::dot(boids[i].dir, to_other_normalized) <= sp.half_fov_cos) continue;
 
 
-		// TODO weight functions
-		sdirs[i] +=
 
 		// Separation
-		-to_other_normalized * (glm::sqrt(PERCEPTION_DISTANCE / dst - 1.0f) * 2.5f) +
+		separation += -to_other_normalized * glm::sqrt(sp.perception_distance / dst - 1.0f);
 
 		// Alignment
-		boids[j].dir +
+		alignment += boids[j].dir;
 
 		// Cohesion
-		to_other_normalized;
+		cohesion += to_other_normalized;
 	}
 
-	sdirs[i] = glm::normalize(sdirs[i]);
+	// Set steering direction
+	sdirs[i] = glm::normalize(boids[i].dir +
+														separation * sp.separation_weight +
+														alignment * sp.alignment_weight +
+														cohesion * sp.cohesion_weight);
 }
 
 
-__global__ void MoveBoids(Boid* boids, glm::vec2* sdirs, glm::mat4* world_matrices, float ANGULAR_VELOCITY, float VELOCITY, float DeltaTimeInSec)
+__global__ void MoveBoids(Boid* boids, glm::vec2* sdirs, glm::mat4* world_matrices, MovementParams mp, float DeltaTimeInSec)
 {
 	int i = threadIdx.x;
 	glm::vec3 dir = glm::vec3(boids[i].dir, 0.0f);
 	glm::vec3 sdir = glm::vec3(sdirs[i], 0.0f);
 
 	// turn towards the steering direction
-	float angle = glm::acos(glm::dot(dir, sdir)) * glm::min(DeltaTimeInSec * ANGULAR_VELOCITY, 1.0f);
+	float angle = glm::acos(glm::dot(dir, sdir)) * glm::min(DeltaTimeInSec * mp.angular_velocity, 1.0f);
 	glm::vec3 axis = glm::cross(dir, sdir);
 	if (abs(axis.z) > 0.01f) {
 		glm::vec2 ndir = glm::rotate(angle, axis) * glm::vec4(dir, 1.0f);
@@ -244,7 +248,7 @@ __global__ void MoveBoids(Boid* boids, glm::vec2* sdirs, glm::mat4* world_matric
 
 
 	// move in the new direction
-	boids[i].pos += boids[i].dir * VELOCITY * DeltaTimeInSec;
+	boids[i].pos += boids[i].dir * mp.velocity * DeltaTimeInSec;
 	boids[i].pos.x = std::fmodf(boids[i].pos.x + 3.0f, 2.0f) - 1.0f;
 	boids[i].pos.y = std::fmodf(boids[i].pos.y + 3.0f, 2.0f) - 1.0f;
 
@@ -265,7 +269,7 @@ void CMyApp::Render()
 
 	// Set steering direction for all boids in kernel
 	// TODO block calls
-	SteerBoids<<<1, m_inst_num>>>(d_boids, d_sdirs, m_inst_num, m_half_fov_cos, m_perception_distance);
+	SteerBoids<<<1, m_inst_num>>>(d_boids, d_sdirs, m_inst_num, m_steering_params);
   checkCudaErrors( cudaGetLastError()  );
 
   // Map buffer object
@@ -279,7 +283,7 @@ void CMyApp::Render()
 
   // Execute kernel
   // Set new positions based on the steering directions
-	MoveBoids<<<1, m_inst_num>>>(d_boids, d_sdirs, world_matrices, m_angular_velocity, m_velocity, m_DeltaTimeInSec);
+	MoveBoids<<<1, m_inst_num>>>(d_boids, d_sdirs, world_matrices, m_movement_params, m_DeltaTimeInSec);
   checkCudaErrors( cudaGetLastError()  );
 
   // Unmap buffer object
@@ -337,9 +341,14 @@ void CMyApp::RenderGUI()
 		static float fov = 180.0f; // in degrees
 		if (ImGui::SliderFloat("FOV", &fov, 0.0f, 360.0f))
 		{
-			m_half_fov_cos = std::cos((fov * 0.5f * M_PI / 180.0f));
+			m_steering_params.half_fov_cos = std::cos((fov * 0.5f * M_PI / 180.0f));
 		}
-		ImGui::SliderFloat("Perception distance", &m_perception_distance, 0.0f, 1.0f);
+		ImGui::SliderFloat("Perception distance", &m_steering_params.perception_distance, 0.0f, 1.0f);
+		ImGui::SliderFloat("Separation weight", &m_steering_params.separation_weight, 0.0f, 10.0f);
+		ImGui::SliderFloat("Alignment weight", &m_steering_params.alignment_weight, 0.0f, 10.0f);
+		ImGui::SliderFloat("Cohesion weight", &m_steering_params.cohesion_weight, 0.0f, 10.0f);
+		ImGui::SliderFloat("Angular velocity", &m_movement_params.angular_velocity, 0.0f, 10.0f);
+		ImGui::SliderFloat("Velocity", &m_movement_params.velocity, 0.0f, 1.0f);
 
 // the weights of boid rules: (5%)
 // separation
