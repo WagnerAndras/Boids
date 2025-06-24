@@ -78,7 +78,7 @@ protected:
 	SteeringParams m_steering_params = {};
 	MovementParams m_movement_params = {};
 	
-	int m_inst_num = 1000;		// how many heads we draw
+	int m_inst_num = 1024;		// how many heads we draw
 	
 	float m_ElapsedTimeInSec = 0.0f;
 	float m_DeltaTimeInSec = 0.0f;
@@ -86,6 +86,9 @@ protected:
 	// Camera
 	Camera m_camera;
 	
+	// CUDA
+	int m_thread_num = 1024;
+
 	// OpenGL
 
 	// Shader variables
