@@ -31,6 +31,21 @@ struct SUpdateInfo
 	float DeltaTimeInSec   = 0.0f; // Előző Update óta eltelt idő
 };
 
+struct SteeringParams {
+	// vision
+	float half_fov_cos = 0.0f;
+	float perception_distance = 0.1; // in uv
+
+	// steering function weights
+	float separation_weight = 2.0f;
+	float alignment_weight = 1.0f;
+	float cohesion_weight = 1.0f;
+};
+
+struct MovementParams {
+	float angular_velocity = glm::half_pi<float>(); // in radians/second
+	float velocity = 0.1; // in uv/second
+};
 
 class CMyApp
 {
@@ -60,13 +75,10 @@ protected:
 	struct cudaGraphicsResource* world_matricesBO_CUDA;
 
 	// Variables
+	SteeringParams m_steering_params = {};
+	MovementParams m_movement_params = {};
 	
-	// TODO weight functions
 	int m_inst_num = 1000;		// how many heads we draw
-	float m_half_fov_cos = 0.0f;
-	float m_perception_distance = 0.1; // in uv
-	float m_angular_velocity = glm::half_pi<float>(); // in radians/second
-	float m_velocity = 0.1; // in uv/second
 	
 	float m_ElapsedTimeInSec = 0.0f;
 	float m_DeltaTimeInSec = 0.0f;
