@@ -11,6 +11,7 @@
 #include <cuda_runtime.h>
 #include <cuda_gl_interop.h>
 #include "includes/helper_cuda.h"
+#include "src/includes/Camera.h"
 
 #include <cmath>
 #include <glm/common.hpp>
@@ -160,6 +161,14 @@ bool CMyApp::Init()
 	glEnable(GL_CULL_FACE);	 // Enable discarding the back-facing faces.
 	glCullFace(GL_BACK);     // GL_BACK: facets facing away from camera, GL_FRONT: facets facing towards the camera
 
+	// Camera
+	m_camera.SetView(
+		glm::vec3(0, 2, 2),// From where we look at the scene - eye
+		glm::vec3(0, 0, 0),	// Which point of the scene we are looking at - at
+		glm::vec3(0, 1, 0)	// Upwards direction - up
+	);
+	m_cameraManipulator.SetCamera(&m_camera);
+
 	return true;
 }
 
@@ -184,12 +193,6 @@ void CMyApp::Restart()
 	cudaGraphicsUnregisterResource(world_matricesBO_CUDA);
 
 	Init();
-}
-
-void CMyApp::Update( const SUpdateInfo& updateInfo )
-{
-	m_ElapsedTimeInSec = updateInfo.ElapsedTimeInSec;
-	m_DeltaTimeInSec = updateInfo.DeltaTimeInSec;
 }
 
 __global__ void SteerBoids(Boid* g_boids, glm::vec2* sdirs, int INST_NUM, SteeringParams sp)
@@ -252,8 +255,7 @@ __global__ void SteerBoids(Boid* g_boids, glm::vec2* sdirs, int INST_NUM, Steeri
 														cohesion * sp.cohesion_weight);
 }
 
-
-__global__ void MoveBoids(Boid* boids, glm::vec2* sdirs, int INST_NUM, glm::mat4* world_matrices, MovementParams mp, float DeltaTimeInSec)
+__global__ void MoveBoids(Boid* boids, glm::vec2* sdirs, int INST_NUM, glm::mat4* world_matrices, MovementParams mp, float DeltaTimeInSec, glm::mat4 view_proj)
 {
 	int b = blockIdx.x;
 	int i = threadIdx.x;
@@ -278,6 +280,8 @@ __global__ void MoveBoids(Boid* boids, glm::vec2* sdirs, int INST_NUM, glm::mat4
 	boids[g].pos.y = std::fmodf(boids[g].pos.y + 3.0f, 2.0f) - 1.0f;
 
 	world_matrices[g] =
+		view_proj
+		*
 		glm::translate(glm::vec3(boids[g].pos, 0))
 		*
 		glm::rotate(atan2(boids[g].dir.y, boids[g].dir.x), glm::vec3(0, 0, 1))
@@ -285,13 +289,13 @@ __global__ void MoveBoids(Boid* boids, glm::vec2* sdirs, int INST_NUM, glm::mat4
 		glm::scale(glm::vec3(0.01));
 }
 
-void CMyApp::Render()
+void CMyApp::Update( const SUpdateInfo& updateInfo )
 {
-	// töröljük a frampuffert (GL_COLOR_BUFFER_BIT)...
-	// ... és a mélységi Z puffert (GL_DEPTH_BUFFER_BIT)
-	//glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-	glClear(GL_COLOR_BUFFER_BIT);
+	m_ElapsedTimeInSec = updateInfo.ElapsedTimeInSec;
+	m_DeltaTimeInSec = updateInfo.DeltaTimeInSec;
 
+	m_cameraManipulator.Update(m_DeltaTimeInSec);
+	
 	// Set steering direction for all boids in kernel
 	// TODO It should work if there's less than m_inst_num * sizeof(Boid) shared memory
   int block_num = (m_inst_num - 1) / m_thread_num + 1;
@@ -309,12 +313,20 @@ void CMyApp::Render()
 
   // Execute kernel
   // Set new positions based on the steering directions
-	MoveBoids<<<block_num, m_thread_num>>>(d_boids, d_sdirs, m_inst_num, world_matrices, m_movement_params, m_DeltaTimeInSec);
+	MoveBoids<<<block_num, m_thread_num>>>(d_boids, d_sdirs, m_inst_num, world_matrices, m_movement_params, m_DeltaTimeInSec, m_camera.GetViewProj());
   checkCudaErrors( cudaGetLastError()  );
 
   // Unmap buffer object
-  checkCudaErrors( cudaGraphicsUnmapResources(1, &world_matricesBO_CUDA, 0) );
-	
+  checkCudaErrors( cudaGraphicsUnmapResources(1, &world_matricesBO_CUDA, 0) );	
+}
+
+void CMyApp::Render()
+{
+	// töröljük a frampuffert (GL_COLOR_BUFFER_BIT)...
+	// ... és a mélységi Z puffert (GL_DEPTH_BUFFER_BIT)
+	//glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	glClear(GL_COLOR_BUFFER_BIT);
+
 	glUseProgram(m_programBoidID);
 	glBindVertexArray(m_BoidGPU.vaoID);
 	glBindBuffer(GL_ARRAY_BUFFER, world_matricesBO);
@@ -386,6 +398,62 @@ void CMyApp::RenderGUI()
 // the type of initial distribution of boids (e.g., uniform randomization) (10%).
 	}
 	ImGui::End();
+}
+
+// https://wiki.libsdl.org/SDL2/SDL_KeyboardEvent
+// https://wiki.libsdl.org/SDL2/SDL_Keysym
+// https://wiki.libsdl.org/SDL2/SDL_Keycode
+// https://wiki.libsdl.org/SDL2/SDL_Keymod
+
+void CMyApp::KeyboardDown(const SDL_KeyboardEvent& key)
+{
+	if (key.repeat == 0) // Triggers only once when held
+	{
+		if (key.keysym.sym == SDLK_F5 && key.keysym.mod & KMOD_CTRL) // CTRL + F5
+		{
+			CleanShaders();
+			InitShaders();
+		}
+		if (key.keysym.sym == SDLK_F1) // F1
+		{
+			GLint polygonModeFrontAndBack[2] = {};
+			// https://registry.khronos.org/OpenGL-Refpages/gl4/html/glGet.xhtml
+			glGetIntegerv(GL_POLYGON_MODE, polygonModeFrontAndBack); // Query the current polygon mode. It gives the front and back modes separately.
+			GLenum polygonMode = (polygonModeFrontAndBack[0] != GL_FILL ? GL_FILL : GL_LINE); // Switch between FILL and LINE
+			// https://registry.khronos.org/OpenGL-Refpages/gl4/html/glPolygonMode.xhtml
+			glPolygonMode(GL_FRONT_AND_BACK, polygonMode); // Set the new polygon mode
+		}
+	}
+	m_cameraManipulator.KeyboardDown(key);
+}
+
+void CMyApp::KeyboardUp(const SDL_KeyboardEvent& key)
+{
+	m_cameraManipulator.KeyboardUp(key);
+}
+
+// https://wiki.libsdl.org/SDL2/SDL_MouseMotionEvent
+
+void CMyApp::MouseMove(const SDL_MouseMotionEvent& mouse)
+{
+	m_cameraManipulator.MouseMove(mouse);
+}
+
+// https://wiki.libsdl.org/SDL2/SDL_MouseButtonEvent
+
+void CMyApp::MouseDown(const SDL_MouseButtonEvent& mouse)
+{
+}
+
+void CMyApp::MouseUp(const SDL_MouseButtonEvent& mouse)
+{
+}
+
+// https://wiki.libsdl.org/SDL2/SDL_MouseWheelEvent
+
+void CMyApp::MouseWheel(const SDL_MouseWheelEvent& wheel)
+{
+	m_cameraManipulator.MouseWheel(wheel);
 }
 
 // New window size

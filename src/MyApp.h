@@ -2,6 +2,7 @@
 
 #include "includes/GLUtils.hpp"
 #include "includes/Camera.h"
+#include "includes/CameraManipulator.h"
 
 // GLM
 #include <glm/ext/scalar_constants.hpp>
@@ -61,6 +62,12 @@ public:
 	void Render();
 	void RenderGUI();
 
+	void KeyboardDown(const SDL_KeyboardEvent&);
+	void KeyboardUp(const SDL_KeyboardEvent&);
+	void MouseMove(const SDL_MouseMotionEvent&);
+	void MouseDown(const SDL_MouseButtonEvent&);
+	void MouseUp(const SDL_MouseButtonEvent&);
+	void MouseWheel(const SDL_MouseWheelEvent&);
 	void Resize(int, int);
 
 	void OtherEvent( const SDL_Event& );
@@ -85,6 +92,7 @@ protected:
 
 	// Camera
 	Camera m_camera;
+	CameraManipulator m_cameraManipulator;
 	
 	// CUDA
 	int m_thread_num = 1024;
