@@ -22,8 +22,8 @@
 #include <SDL2/SDL_opengl.h>
 
 struct Boid {
-	glm::vec2 pos;
-	glm::vec2 dir;
+	glm::vec3 pos;
+	glm::vec3 dir;
 };
 
 struct SUpdateInfo
@@ -77,7 +77,7 @@ protected:
 	
 	// Boids
   Boid* d_boids;
-	glm::vec2* d_sdirs;
+	glm::vec3* d_sdirs;
 	GLuint world_matricesBO = 0;
 	struct cudaGraphicsResource* world_matricesBO_CUDA;
 
