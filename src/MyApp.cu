@@ -24,6 +24,7 @@
 #include <glm/fwd.hpp>
 #include <glm/geometric.hpp>
 #include <glm/gtc/constants.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <glm/matrix.hpp>
 #include <imgui.h>
 
@@ -128,14 +129,14 @@ void CMyApp::InitPositions()
 	{
 		float angle = randAngle(mt);
 		boids[i] = Boid {
-				glm::vec2(randOffset(mt), randOffset(mt)),
-				glm::vec2(glm::cos(angle), glm::sin(angle)),
+				glm::vec3(randOffset(mt), randOffset(mt), randOffset(mt)),
+				glm::normalize(glm::vec3(randOffset(mt), randOffset(mt), randOffset(mt))),
 			};
 	}
 
 	// Allocate vectors in device memory
   checkCudaErrors( cudaMalloc(&d_boids, m_inst_num * sizeof(Boid)) );
-  checkCudaErrors( cudaMalloc(&d_sdirs, m_inst_num * sizeof(glm::vec2)) );
+  checkCudaErrors( cudaMalloc(&d_sdirs, m_inst_num * sizeof(glm::vec3)) );
   
   // Put initial positions on GPU
   checkCudaErrors( cudaMemcpy(d_boids, boids, m_inst_num * sizeof(Boid), cudaMemcpyHostToDevice) );
@@ -204,7 +205,7 @@ void CMyApp::Restart()
 	Init();
 }
 
-__global__ void SteerBoids(Boid* g_boids, glm::vec2* sdirs, int INST_NUM, SteeringParams sp)
+__global__ void SteerBoids(Boid* g_boids, glm::vec3* sdirs, int INST_NUM, SteeringParams sp)
 {
 	extern __shared__ Boid boids[];
 
@@ -225,22 +226,22 @@ __global__ void SteerBoids(Boid* g_boids, glm::vec2* sdirs, int INST_NUM, Steeri
 
 	if (g >= INST_NUM) return;
 
-	glm::vec2 separation = glm::vec2(0.0f);
-	glm::vec2 alignment = glm::vec2(0.0f);
-	glm::vec2 cohesion = glm::vec2(0.0f);
+	glm::vec3 separation = glm::vec3(0.0f);
+	glm::vec3 alignment = glm::vec3(0.0f);
+	glm::vec3 cohesion = glm::vec3(0.0f);
 	for (int j = 0; j < INST_NUM; j++)
 	{
 
 		// see if it's the same
 		if (j == g) continue;
 
-		glm::vec2 to_other = boids[j].pos - boids[g].pos;
+		glm::vec3 to_other = boids[j].pos - boids[g].pos;
 		float dst = glm::length(to_other);
 
 		// see if it's inside the perception radius
 		if (dst > sp.perception_distance) continue;
 
-		glm::vec2 to_other_normalized = to_other / dst;
+		glm::vec3 to_other_normalized = to_other / dst;
 
 		// see if it's in the field of view
 		if (glm::dot(boids[g].dir, to_other_normalized) <= sp.half_fov_cos) continue;
@@ -264,21 +265,19 @@ __global__ void SteerBoids(Boid* g_boids, glm::vec2* sdirs, int INST_NUM, Steeri
 														cohesion * sp.cohesion_weight);
 }
 
-__global__ void MoveBoids(Boid* boids, glm::vec2* sdirs, int INST_NUM, glm::mat4* world_matrices, MovementParams mp, float DeltaTimeInSec, glm::mat4 view_proj)
+__global__ void MoveBoids(Boid* boids, glm::vec3* sdirs, int INST_NUM, glm::mat4* world_matrices, MovementParams mp, float DeltaTimeInSec, glm::mat4 view_proj)
 {
 	int b = blockIdx.x;
 	int i = threadIdx.x;
 	int g = b * blockDim.x + i; // Global index
 	if (g >= INST_NUM) return;
 	
-	glm::vec3 dir = glm::vec3(boids[g].dir, 0.0f);
-	glm::vec3 sdir = glm::vec3(sdirs[g], 0.0f);
-
 	// turn towards the steering direction
-	float angle = glm::acos(glm::dot(dir, sdir)) * glm::min(DeltaTimeInSec * mp.angular_velocity, 1.0f);
-	glm::vec3 axis = glm::cross(dir, sdir);
-	if (abs(axis.z) > 0.01f) {
-		glm::vec2 ndir = glm::rotate(angle, axis) * glm::vec4(dir, 1.0f);
+	float angle = glm::acos(glm::dot(boids[g].dir, sdirs[g])) * // angle between dir and sdir
+													glm::min(DeltaTimeInSec * mp.angular_velocity, 1.0f); // interpolate
+	glm::vec3 axis = glm::cross(boids[g].dir, sdirs[g]);
+	if (glm::length(axis) > 0.01f) {
+		glm::vec3 ndir = glm::rotate(angle, axis) * glm::vec4(boids[g].dir, 1.0f);
 		boids[g].dir = glm::normalize(ndir);
 	}
 
@@ -287,13 +286,20 @@ __global__ void MoveBoids(Boid* boids, glm::vec2* sdirs, int INST_NUM, glm::mat4
 	boids[g].pos += boids[g].dir * mp.velocity * DeltaTimeInSec;
 	boids[g].pos.x = std::fmodf(boids[g].pos.x + 3.0f, 2.0f) - 1.0f;
 	boids[g].pos.y = std::fmodf(boids[g].pos.y + 3.0f, 2.0f) - 1.0f;
+	boids[g].pos.z = std::fmodf(boids[g].pos.z + 3.0f, 2.0f) - 1.0f;
 
+	// find new world rotation
+	angle = glm::acos(glm::dot(glm::vec3(1, 0, 0), boids[g].dir));
+	axis = glm::cross(glm::vec3(1, 0, 0), boids[g].dir);
+	glm::mat4 rot = glm::length(axis) > 0.01f ? glm::rotate(angle, axis) : glm::identity<glm::mat4>();
+
+	// set view projection * world transform matrix
 	world_matrices[g] =
 		view_proj
 		*
-		glm::translate(glm::vec3(boids[g].pos, 0))
+		glm::translate(boids[g].pos)
 		*
-		glm::rotate(atan2(boids[g].dir.y, boids[g].dir.x), glm::vec3(0, 0, 1))
+		rot
 		*
 		glm::scale(glm::vec3(0.01));
 }
