@@ -71,11 +71,18 @@ void CMyApp::InitShaders()
 		.ShaderStage(GL_VERTEX_SHADER, "Boid.vert")
 		.ShaderStage(GL_FRAGMENT_SHADER, "Boid.frag")
 		.Link();
+
+	m_programCubeID = glCreateProgram();
+	ProgramBuilder{ m_programCubeID }
+		.ShaderStage(GL_VERTEX_SHADER, "Cube.vert")
+		.ShaderStage(GL_FRAGMENT_SHADER, "Boid.frag")
+		.Link();
 }
 
 void CMyApp::CleanShaders()
 {
 	glDeleteProgram(m_programBoidID);
+	glDeleteProgram(m_programCubeID);
 }
 
 
@@ -83,6 +90,7 @@ void CMyApp::InitGeometry()
 {
 	if (m_BoidGPU.count > 0) return; // don't reinitialize
 
+	// Boid
 	MeshObject<glm::vec3> m_BoidMeshCPU;
 
 	// Simple triangle
@@ -107,11 +115,46 @@ void CMyApp::InitGeometry()
 	};
 
 	m_BoidGPU = CreateGLObjectFromMesh( m_BoidMeshCPU, { { 0, offsetof( glm::vec3,x), 3, GL_FLOAT}});
+
+
+	// Cube
+	MeshObject<glm::vec3> m_CubeMeshCPU;
+
+	// Simple triangle
+	m_CubeMeshCPU.vertexArray = {
+		glm::vec3(  1,  1,  1 ),
+		glm::vec3( -1,  1,  1 ),
+		glm::vec3( -1, -1,  1 ),
+		glm::vec3(  1, -1,  1 ),
+		glm::vec3(  1,  1, -1 ),
+		glm::vec3( -1,  1, -1 ),
+		glm::vec3( -1, -1, -1 ),
+		glm::vec3(  1, -1, -1 ),
+	};
+
+	m_CubeMeshCPU.indexArray =
+	{
+		0, 1,
+		1, 2,
+		2, 3,
+		3, 0,
+		4, 5,
+		5, 6,
+		6, 7,
+		7, 4,
+		0, 4,
+		1, 5,
+		2, 6,
+		3, 7,
+	};
+
+	m_CubeGPU = CreateGLObjectFromMesh( m_CubeMeshCPU, { { 0, offsetof( glm::vec3,x), 3, GL_FLOAT}});
 }
 
 void CMyApp::CleanGeometry()
 {
 	CleanOGLObject( m_BoidGPU );
+	CleanOGLObject( m_CubeGPU );
 }
 
 void CMyApp::InitPositions()
@@ -170,6 +213,8 @@ bool CMyApp::Init()
 
 	glEnable(GL_CULL_FACE);	 // Enable discarding the back-facing faces.
 	glCullFace(GL_BACK);     // GL_BACK: facets facing away from camera, GL_FRONT: facets facing towards the camera
+	
+	glEnable(GL_DEPTH_TEST);
 
 	// Camera
 	m_camera.SetView(
@@ -339,9 +384,19 @@ void CMyApp::Render()
 {
 	// töröljük a frampuffert (GL_COLOR_BUFFER_BIT)...
 	// ... és a mélységi Z puffert (GL_DEPTH_BUFFER_BIT)
-	//glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-	glClear(GL_COLOR_BUFFER_BIT);
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	// glClear(GL_COLOR_BUFFER_BIT);
 
+	// Cube
+	glUseProgram(m_programCubeID);
+	glBindVertexArray(m_CubeGPU.vaoID);
+
+	glUniformMatrix4fv( ul("viewProj"), 1, GL_FALSE, glm::value_ptr(m_camera.GetViewProj()) );
+
+	glDrawArrays(GL_LINES, 0, m_CubeGPU.count);
+	glDrawElements(GL_LINES, m_CubeGPU.count, GL_UNSIGNED_INT, 0);
+
+	// Boids
 	glUseProgram(m_programBoidID);
 	glBindVertexArray(m_BoidGPU.vaoID);
 	glBindBuffer(GL_ARRAY_BUFFER, world_matricesBO);

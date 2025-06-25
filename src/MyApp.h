@@ -101,7 +101,7 @@ protected:
 
 	// Shader variables
 	GLuint m_programBoidID = 0;
-
+	GLuint m_programCubeID = 0;
 
 	// Shader initialization and termination
 	void InitShaders();
@@ -109,6 +109,7 @@ protected:
 	
 	// Geometry variables
 	OGLObject m_BoidGPU = {};
+	OGLObject m_CubeGPU = {};
 	
 	// Geometry initialization and termination
 	void InitPositions();
