@@ -82,21 +82,30 @@ void CMyApp::InitGeometry()
 {
 	if (m_BoidGPU.count > 0) return; // don't reinitialize
 
-	MeshObject<glm::vec2> m_BoidMeshCPU;
+	MeshObject<glm::vec3> m_BoidMeshCPU;
 
 	// Simple triangle
 	m_BoidMeshCPU.vertexArray = {
-		glm::vec2( -1, 1 ),
-		glm::vec2( -1,-1 ),
-		glm::vec2(  1, 0 ),
+		glm::vec3(  1,  0,   0   ),
+		glm::vec3( -1,  0.5, 0.5 ),
+		glm::vec3( -1, -0.5, 0.5 ),
+		glm::vec3( -1, -0.5,-0.5 ),
+		glm::vec3( -1,  0.5,-0.5 ),
 	};
 
 	m_BoidMeshCPU.indexArray =
 	{
-		0, 1, 2
+		// sides
+		0, 1, 2,
+		0, 2, 3,
+		0, 3, 4,
+		0, 4, 1,
+		// back
+		1, 3, 2,
+		1, 4, 3,
 	};
 
-	m_BoidGPU = CreateGLObjectFromMesh( m_BoidMeshCPU, { { 0, offsetof( glm::vec2,x), 2, GL_FLOAT}});
+	m_BoidGPU = CreateGLObjectFromMesh( m_BoidMeshCPU, { { 0, offsetof( glm::vec3,x), 3, GL_FLOAT}});
 }
 
 void CMyApp::CleanGeometry()
