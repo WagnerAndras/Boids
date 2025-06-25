@@ -13,12 +13,6 @@ fs = import('fs')
 fs.copyfile('src/Boid.frag', install : true, install_dir : '.')
 fs.copyfile('src/Boid.vert', install : true, install_dir : '.')
 
-fs.copyfile('src/Frag_Lighting.frag', install : true, install_dir : '.')
-fs.copyfile('src/Vert_PosNormTex.vert', install : true, install_dir : '.')
-fs.copyfile('src/Vert_InstancedAttr.vert', install : true, install_dir : '.')
-fs.copyfile('src/Vert_InstancedUBO.vert', install : true, install_dir : '.')
-
-
 executable('Boids',
            'src/main.cpp',
            #'src/MyApp.cu',
