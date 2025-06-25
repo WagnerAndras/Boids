@@ -55,37 +55,13 @@ void CMyApp::InitShaders()
 	m_programNoInstanceID = glCreateProgram();
 	ProgramBuilder{ m_programNoInstanceID }
 		.ShaderStage(GL_VERTEX_SHADER, "Boid.vert")
-		//.ShaderStage(GL_FRAGMENT_SHADER, "Boid.frag")
-		.Link();
-
-/*
-	m_programUboInstanceID = glCreateProgram();
-	ProgramBuilder{ m_programUboInstanceID }
-		.ShaderStage(GL_VERTEX_SHADER, "Vert_InstancedUBO.vert")
 		.ShaderStage(GL_FRAGMENT_SHADER, "Boid.frag")
 		.Link();
-
-	// Get the index of a named uniform block
-	GLuint blockIndex = glGetUniformBlockIndex(	m_programUboInstanceID, // Program ID
-												"m_ubo_buffer");		// Uniform block name
-	// We assign a binding point to an active uniform block
-	glUniformBlockBinding(	m_programUboInstanceID,	// Program ID
-							blockIndex,				// The index of the active uniform block within program whose binding to assign.
-							uniformBlockBinding);	// Specifies the binding point to which to bind the uniform block with index uniformBlockIndex within program.
-
-	m_programArrayAttrInstanceID = glCreateProgram();
-	ProgramBuilder{ m_programArrayAttrInstanceID }
-		.ShaderStage(GL_VERTEX_SHADER, "Vert_InstancedAttr.vert")
-		.ShaderStage(GL_FRAGMENT_SHADER, "Boid.frag")
-		.Link();
-*/
 }
 
 void CMyApp::CleanShaders()
 {
-	glDeleteProgram(m_programArrayAttrInstanceID);
-	//glDeleteProgram(m_programNoInstanceID);
-	//glDeleteProgram(m_programUboInstanceID);
+	glDeleteProgram(m_programNoInstanceID);
 }
 
 
@@ -138,66 +114,7 @@ void CMyApp::InitPositions()
 	checkCudaErrors( cudaMalloc(&d_world_matrices, INST_NUM * sizeof(glm::mat4)));
   
   checkCudaErrors( cudaMemcpy(d_boids, m_boids, INST_NUM * sizeof(Boid), cudaMemcpyHostToDevice));
-
-
-	/*
-	// We create one buffer id
-	glCreateBuffers(1, &m_uboID);
-  glNamedBufferData( m_uboID, uboSizeBytes, nullptr, GL_DYNAMIC_DRAW );
-	// Bind range within a buffer object to an indexed buffer target
-	glBindBufferRange(	GL_UNIFORM_BUFFER,	// Target
-						uniformBlockBinding,		// Index
-						m_uboID,			// Buffer ID
-						0,					// Offset
-						uboSizeBytes);		// Size in bytes
-	*/
 }
-
-/*
-void CMyApp::InitAttributeMode()
-{
-	// TODO: vec3, mat3
-	static constexpr int vec4Size = sizeof(glm::vec4);
-	static constexpr int mat4Size = sizeof(glm::mat4);
-
-	// To help setup the new vao attributes
-	const auto addAttrib = [&](int binding, int attr)
-	{
-		// We can't put our matrix into one attribute, because only max 4 components are allowed per attribute,
-		// so we need four attribute per 4x4matrix
-		for ( int col_i = 0; col_i < 4; col_i++ )
-		{
-
-			glEnableVertexArrayAttrib( m_BoidGPU.vaoID, attr + col_i );
-			glVertexArrayAttribBinding( m_BoidGPU.vaoID, attr + col_i, binding ); // melyik VBO-ból olvassa az adatokat
-			glVertexArrayAttribFormat( m_BoidGPU.vaoID, attr + col_i, 4, GL_FLOAT, GL_FALSE, col_i * vec4Size );
-
-		}
-	};
-
-	// We add another buffer to our VAO
-
-	glCreateBuffers(1, &m_matrixBufferID);
-  glNamedBufferData( m_matrixBufferID, INST_NUM * mat4Size, nullptr, GL_STATIC_DRAW ); // This allocates the memory on GPU
-	glNamedBufferSubData(m_matrixBufferID, 0, INST_NUM * mat4Size, m_world_matricies.data());
-
-	glVertexArrayVertexBuffer( m_BoidGPU.vaoID, 1, m_matrixBufferID, 0, mat4Size );
-
-	// If divisor is zero, the attributes in binding indexed VBO advances once per vertex. If divisor is non-zero,
-	// the attribute advances once per divisor instances of the set(s) of vertices being rendered
-	glVertexArrayBindingDivisor(m_BoidGPU.vaoID, // VAO
-								 1,	// Index
-								 1 );// Divisor
-	//glVertexArrayBindingDivisor(m_BoidGPU.vaoID, // VAO
-	//							 2,	// Index
-	//							 1 );// Divisor
-	
-
-	addAttrib(1,3);
-	//addAttrib(2,7);
-}
-*/
-
 
 bool CMyApp::Init()
 {
@@ -335,73 +252,6 @@ void CMyApp::DrawNoInstance()
 	// exit(0);
 }
 
-/*
-void CMyApp::DrawUboInstance()
-{
-	glUseProgram(m_programUboInstanceID);
-	glBindVertexArray(m_BoidGPU.vaoID);
-
-	glUniformMatrix4fv( ul("viewProj"), 1, GL_FALSE, glm::value_ptr(m_camera.GetViewProj()));
-	glUniform1i( ul("textureImage"), 0);
-
-	glBindBuffer(GL_UNIFORM_BUFFER, m_uboID);
-	
-
-	// Fill the UBO with data then draw, and repeat until every object is drawn 
-	for (int rendered_total = 0; rendered_total < INST_NUM;)
-	{
-		int to_render = std::min(uboSize, INST_NUM - rendered_total);
-
-
-		// TODO: mat3
-		std::vector<glm::mat4> data(2 * uboSize);
-		// Similar to memcpy
-		std::copy(m_world_matricies.begin() + rendered_total,	m_world_matricies.begin() + rendered_total + to_render,		data.begin());
-
-		// Set buffer data, we use subdata because we don't want to reallocate the buffer, we just want to set the data
-		glBufferSubData(GL_UNIFORM_BUFFER,//m_uboID 				// Target
-						0,							// Offset
-						uboSizeBytes,				// Size in bytes
-						(const void*)data.data());	// Pointer to the data
-
-		
-		// We draw multiple instances of Suzzanne with one call
-		glDrawElementsInstanced(GL_TRIANGLES,		// Primitive type
-								m_BoidGPU.count,	// Count
-								GL_UNSIGNED_INT,	// Index buffer data type
-								0,					// Offset in the index buffer
-								to_render);			// How many instance do we draw? (Only new compared to glDrawElements)
-
-		rendered_total += to_render;
-	}
-	// We can unbind them
-	glBindVertexArray(0);
-
-	glBindBuffer(GL_UNIFORM_BUFFER, 0);
-	glUseProgram(0);
-}
-*/
-
-/*
-void CMyApp::DrawArrayAttrInstanced()
-{
-	glBindVertexArray( m_BoidGPU.vaoID );
-
-	// We don't have to set out World and WorldIT matrices, 
-	// because they are shipped by the VAO
-
-	glUseProgram(m_programArrayAttrInstanceID);
-
-	// We draw multiple instances of Suzzanne with one call
-	glDrawElementsInstanced(GL_TRIANGLES,	// Primitive type
-		m_BoidGPU.count,	// Count
-		GL_UNSIGNED_INT,	// Index buffer data type
-		0,					// Offset in the index buffer
-		INST_NUM);			// How many instance do we draw? (Only new compared to glDrawElements)
-
-	glBindVertexArray(0);
-}
-*/
 
 void CMyApp::Render()
 {
