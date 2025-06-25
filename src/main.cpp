@@ -173,7 +173,6 @@ int main(int argc, char* args[])
 						Uint32 FullScreenSwitchFlag = (SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN_DESKTOP) ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP;
 						SDL_SetWindowFullscreen(win, FullScreenSwitchFlag);
 					}
-					/*
 					if (!is_keyboard_captured)
 						app.KeyboardDown(ev.key);
 					break;
@@ -197,7 +196,6 @@ int main(int argc, char* args[])
 					if (!is_mouse_captured)
 						app.MouseMove(ev.motion);
 					break;
-					*/
 				case SDL_WINDOWEVENT:
 					// On some platforms (e.g. Windows) SIZE_CHANGED is not called when first shown.
 					// We think this is a bug in the SDL library.
