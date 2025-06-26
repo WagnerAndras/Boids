@@ -82,6 +82,8 @@ protected:
 	struct cudaGraphicsResource* world_matricesBO_CUDA;
 
 	// Variables
+	int m_distribution_idx = 0;
+
 	SteeringParams m_steering_params = {};
 	MovementParams m_movement_params = {};
 	
