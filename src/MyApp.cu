@@ -157,7 +157,7 @@ void CMyApp::CleanGeometry()
 	CleanOGLObject( m_CubeGPU );
 }
 
-// Initializing the Boid positions and rotations 
+// Distributions for initializing the Boid positions and rotations
 std::random_device r; // seed source
 std::seed_seq seeds{r(), r(), r(), r(), r(), r(), r(), r()};
 std::mt19937 mt(seeds); // random engine with seeds
@@ -195,12 +195,28 @@ Boid (*distributions[5])() = {
 
 void CMyApp::InitPositions()
 {	
-	// initialize each boid with a posiotion and an angle
+
+	Sphere* spheres = (Sphere*)malloc(m_sphere_num * sizeof(Sphere));
+	for (int i = 0; i < m_sphere_num; ++i)
+	{
+		spheres[i] = Sphere {glm::vec3(0), 0.5f}; // TODO change
+		// spheres[i] = distributions[m_distribution_idx]();	
+	}
+	// TODO check if boid would spawn inside sphere
+
+	// Initialize each boid with a posiotion and an angle
 	Boid* boids = (Boid*)malloc(m_inst_num * sizeof(Boid));
 	for (int i = 0; i < m_inst_num; ++i)
 	{
 		boids[i] = distributions[m_distribution_idx]();	
 	}
+
+	// Allocate vectors in device memory
+  checkCudaErrors( cudaMalloc(&d_spheres, m_sphere_num * sizeof(Sphere)) );
+  
+  // Put initial positions on GPU
+  checkCudaErrors( cudaMemcpy(d_spheres, spheres, m_sphere_num * sizeof(Sphere), cudaMemcpyHostToDevice) );
+	free(spheres);
 
 	// Allocate vectors in device memory
   checkCudaErrors( cudaMalloc(&d_boids, m_inst_num * sizeof(Boid)) );
@@ -275,7 +291,7 @@ void CMyApp::Restart()
 	Init();
 }
 
-__global__ void SteerBoids(Boid* g_boids, glm::vec3* sdirs, int INST_NUM, SteeringParams sp)
+__global__ void SteerBoids(Boid* g_boids, glm::vec3* sdirs, int INST_NUM, Sphere* spheres, int SPHERE_NUM, SteeringParams sp)
 {
 	extern __shared__ Boid boids[];
 
@@ -299,6 +315,8 @@ __global__ void SteerBoids(Boid* g_boids, glm::vec3* sdirs, int INST_NUM, Steeri
 	glm::vec3 separation = glm::vec3(0.0f);
 	glm::vec3 alignment = glm::vec3(0.0f);
 	glm::vec3 cohesion = glm::vec3(0.0f);
+
+	// Other boids
 	for (int j = 0; j < INST_NUM; j++)
 	{
 
@@ -326,6 +344,31 @@ __global__ void SteerBoids(Boid* g_boids, glm::vec3* sdirs, int INST_NUM, Steeri
 
 		// Cohesion
 		cohesion += to_other_normalized;
+	}
+
+	// Spheres
+	for (int j = 0; j < SPHERE_NUM; j++)
+	{
+		glm::vec3 to_center = spheres[j].center - boids[g].pos;
+		if (glm::length(to_center) - spheres[j].radius > sp.perception_distance) continue;
+
+		// a = 1 as directions are unit vectors
+    float b = 2.0f * glm::dot(-to_center, boids[g].dir);
+    float c = glm::dot(to_center,to_center) - spheres[j].radius*spheres[j].radius;
+    float discriminant = b*b - 4.0f*c;
+    if (discriminant < 0.0f) continue;
+
+    float sqd = sqrt(discriminant);
+    float numerator = -b - sqd;
+    if(numerator < 0.0f)
+        numerator = -b + sqd;
+    float dst = 0.5f * numerator;
+    if (dst > sp.perception_distance) continue;
+
+		glm::vec3 intersection = boids[g].pos + dst * boids[g].dir;
+		glm::vec3 normal = normalize(intersection - spheres[j].center);
+
+		separation += normal * glm::sqrt(sp.perception_distance / dst - 1.0f);
 	}
 
 	// Set steering direction
@@ -384,7 +427,7 @@ void CMyApp::Update( const SUpdateInfo& updateInfo )
 	// Set steering direction for all boids in kernel
 	// TODO It should work if there's less than m_inst_num * sizeof(Boid) shared memory
   int block_num = (m_inst_num - 1) / m_thread_num + 1;
-	SteerBoids<<<block_num, m_thread_num, m_inst_num * sizeof(Boid)>>>(d_boids, d_sdirs, m_inst_num, m_steering_params);
+	SteerBoids<<<block_num, m_thread_num, m_inst_num * sizeof(Boid)>>>(d_boids, d_sdirs, m_inst_num, d_spheres, m_sphere_num, m_steering_params);
   checkCudaErrors( cudaGetLastError()  );
 
   // Map buffer object

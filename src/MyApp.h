@@ -26,6 +26,11 @@ struct Boid {
 	glm::vec3 dir;
 };
 
+struct Sphere {
+	glm::vec3 center;
+	float radius;
+};
+
 struct SUpdateInfo
 {
 	float ElapsedTimeInSec = 0.0f; // Program indulása óta eltelt idő
@@ -81,13 +86,18 @@ protected:
 	GLuint world_matricesBO = 0;
 	struct cudaGraphicsResource* world_matricesBO_CUDA;
 
+	// Spheres
+	Sphere* m_spheres;
+	Sphere* d_spheres;
+
 	// Variables
 	int m_distribution_idx = 0;
 
 	SteeringParams m_steering_params = {};
 	MovementParams m_movement_params = {};
 	
-	int m_inst_num = 1024;		// how many heads we draw
+	int m_inst_num = 1024;
+	int m_sphere_num = 1;
 	
 	float m_ElapsedTimeInSec = 0.0f;
 	float m_DeltaTimeInSec = 0.0f;
