@@ -157,24 +157,49 @@ void CMyApp::CleanGeometry()
 	CleanOGLObject( m_CubeGPU );
 }
 
+// Initializing the Boid positions and rotations 
+std::random_device r; // seed source
+std::seed_seq seeds{r(), r(), r(), r(), r(), r(), r(), r()};
+std::mt19937 mt(seeds); // random engine with seeds
+std::uniform_real_distribution<float> randOffset(-1.0f, 1.0f);
+
+Boid (*distributions[5])() = {
+        [](){ // random
+					return Boid {
+						glm::vec3(randOffset(mt), randOffset(mt), randOffset(mt)),
+						glm::normalize(glm::vec3(randOffset(mt), randOffset(mt), randOffset(mt)))};
+				},
+        [](){ // look to X
+					return Boid {
+						glm::vec3(randOffset(mt), randOffset(mt), randOffset(mt)),
+						glm::vec3(1.0f, 0.0f, 0.0f)};
+				},
+        [](){ // tightly packed
+					return Boid {
+						glm::vec3(randOffset(mt), randOffset(mt), randOffset(mt)) / 2.0f,
+						glm::normalize(glm::vec3(randOffset(mt), randOffset(mt), randOffset(mt)))};
+				},
+        [](){ // plane
+					return Boid {
+						glm::vec3(randOffset(mt), 0.0f, randOffset(mt)),
+						glm::normalize(glm::vec3(randOffset(mt), randOffset(mt), randOffset(mt)))};
+				},
+        [](){ // sphere
+        	float x = randOffset(mt);
+        	float z = randOffset(mt);
+					return Boid {
+						glm::normalize(glm::vec3(x, randOffset(mt), z)) / 2.0f,
+						glm::normalize(glm::vec3(-z, 0.0f, x))};
+				},
+    };
+
 void CMyApp::InitPositions()
-{
-	// Initializing the Boid positions and rotations 
-	std::random_device r; // seed source
-	std::seed_seq seeds{r(), r(), r(), r(), r(), r(), r(), r()};
-	std::mt19937 mt(seeds); // random engine with seeds
-	std::uniform_real_distribution<float> randOffset(-1.0f, 1.0f);
-	std::uniform_real_distribution<float> randAngle(-glm::pi<float>(), glm::pi<float>());
-	
+{	
 	// initialize each boid with a posiotion and an angle
 	Boid* boids = (Boid*)malloc(m_inst_num * sizeof(Boid));
 	for (int i = 0; i < m_inst_num; ++i)
 	{
-		float angle = randAngle(mt);
-		boids[i] = Boid {
-				glm::vec3(randOffset(mt), randOffset(mt), randOffset(mt)),
-				glm::normalize(glm::vec3(randOffset(mt), randOffset(mt), randOffset(mt))),
-			};
+		boids[i] = distributions[m_distribution_idx]();	
 	}
 
 	// Allocate vectors in device memory
@@ -218,7 +243,7 @@ bool CMyApp::Init()
 
 	// Camera
 	m_camera.SetView(
-		glm::vec3(0, 2, 2),// From where we look at the scene - eye
+		glm::vec3(4, 3, 6),// From where we look at the scene - eye
 		glm::vec3(0, 0, 0),	// Which point of the scene we are looking at - at
 		glm::vec3(0, 1, 0)	// Upwards direction - up
 	);
@@ -442,13 +467,23 @@ void CMyApp::RenderGUI()
 	if (ImGui::Begin("Settings"))
 	{
 		ImGui::SliderInt("Boid number", &inst_num, 1, 2048);
+		
+		ImGui::RadioButton( "Random", &m_distribution_idx, 0 );
+		ImGui::RadioButton( "Look to X", &m_distribution_idx, 1);
+		ImGui::RadioButton( "Tightly packed", &m_distribution_idx, 2);
+		ImGui::RadioButton( "Plane", &m_distribution_idx, 3);
+		ImGui::RadioButton( "Sphere", &m_distribution_idx, 4);
+
 		if (ImGui::Button("Restart"))
 		{
 			m_inst_num = inst_num;
 			CMyApp::Restart();
 		}
-// the number of boids (5%)
-// the FOV of boids (10%)
+	}
+	ImGui::End();
+
+	if (ImGui::Begin("Boid parameters"))
+	{
 		static float fov = 180.0f; // in degrees
 		if (ImGui::SliderFloat("FOV", &fov, 0.0f, 360.0f))
 		{
@@ -460,12 +495,6 @@ void CMyApp::RenderGUI()
 		ImGui::SliderFloat("Cohesion weight", &m_steering_params.cohesion_weight, 0.0f, 10.0f);
 		ImGui::SliderFloat("Angular velocity", &m_movement_params.angular_velocity, 0.0f, 10.0f);
 		ImGui::SliderFloat("Velocity", &m_movement_params.velocity, 0.0f, 1.0f);
-
-// the weights of boid rules: (5%)
-// separation
-// alignment
-// cohesion
-// the type of initial distribution of boids (e.g., uniform randomization) (10%).
 	}
 	ImGui::End();
 }
