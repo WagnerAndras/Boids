@@ -1,12 +1,11 @@
 #include "MyApp.h"
-// #include "SDL_log.h"
 #include "includes/GLUtils.hpp"
 #include "includes/SDL_GLDebugMessageCallback.h"
 #include "includes/ProgramBuilder.h"
+#include "includes/ParametricSurfaceMesh.hpp"
 
 
 #include "device_launch_parameters.h"
-//#include <__clang_cuda_builtin_vars.h>
 #include <cstdlib>
 #include <cuda_runtime.h>
 #include <cuda_gl_interop.h>
@@ -77,14 +76,52 @@ void CMyApp::InitShaders()
 		.ShaderStage(GL_VERTEX_SHADER, "Cube.vert")
 		.ShaderStage(GL_FRAGMENT_SHADER, "Boid.frag")
 		.Link();
+	
+	m_programSphereID = glCreateProgram();
+	ProgramBuilder{ m_programSphereID }
+		.ShaderStage(GL_VERTEX_SHADER, "Sphere.vert")
+		.ShaderStage(GL_FRAGMENT_SHADER, "Boid.frag")
+		.Link();
 }
 
 void CMyApp::CleanShaders()
 {
 	glDeleteProgram(m_programBoidID);
 	glDeleteProgram(m_programCubeID);
+	glDeleteProgram(m_programSphereID);
 }
 
+struct ParamSphere
+{
+	float R;
+	ParamSphere( float R_ = 1.0f ) : R( R_ ) {}
+
+	glm::vec3 GetPos( float u, float v ) const noexcept
+	{
+		u *= glm::two_pi<float>();
+		v *= glm::pi<float>();
+		return glm::vec3(
+				R * cosf( u ) * sinf( v ),
+				R * cosf( v ),
+				R * sinf( u ) * sinf( v ) );
+	}
+
+	glm::vec3 GetNorm ( float u, float v ) const noexcept
+	{
+		u *= glm::two_pi<float>();
+		v *= glm::pi<float>();
+		return glm::vec3(
+				cosf( u ) * sinf( v ),
+				cosf( v ),
+				sinf( u ) * sinf( v ) );
+	}
+
+
+	glm::vec2 GetTex( float u, float v ) const noexcept
+	{
+		return glm::vec2( 1 - u, 1 - v );
+	}
+};
 
 void CMyApp::InitGeometry()
 {
@@ -114,7 +151,7 @@ void CMyApp::InitGeometry()
 		1, 4, 3,
 	};
 
-	m_BoidGPU = CreateGLObjectFromMesh( m_BoidMeshCPU, { { 0, offsetof( glm::vec3,x), 3, GL_FLOAT}});
+	m_BoidGPU = CreateGLObjectFromMesh( m_BoidMeshCPU, { { 0, offsetof( glm::vec3,x), 3, GL_FLOAT } });
 
 
 	// Cube
@@ -148,13 +185,25 @@ void CMyApp::InitGeometry()
 		3, 7,
 	};
 
-	m_CubeGPU = CreateGLObjectFromMesh( m_CubeMeshCPU, { { 0, offsetof( glm::vec3,x), 3, GL_FLOAT}});
+	m_CubeGPU = CreateGLObjectFromMesh( m_CubeMeshCPU, { { 0, offsetof( glm::vec3,x), 3, GL_FLOAT } });
+	
+	MeshObject<Vertex> surfaceMeshCPU = GetParamSurfMesh( ParamSphere() );
+
+	MeshObject<glm::vec3> sphereCPU;
+	for (int i = 0; i < surfaceMeshCPU.vertexArray.size(); i++)
+	{
+		sphereCPU.vertexArray.push_back(surfaceMeshCPU.vertexArray[i].position);
+	}
+	sphereCPU.indexArray = surfaceMeshCPU.indexArray;
+
+	m_SphereGPU = CreateGLObjectFromMesh( sphereCPU, { { 0, offsetof( glm::vec3,x), 3, GL_FLOAT } });
 }
 
 void CMyApp::CleanGeometry()
 {
 	CleanOGLObject( m_BoidGPU );
 	CleanOGLObject( m_CubeGPU );
+	CleanOGLObject( m_SphereGPU );
 }
 
 // Distributions for initializing the Boid positions and rotations
@@ -162,6 +211,14 @@ std::random_device r; // seed source
 std::seed_seq seeds{r(), r(), r(), r(), r(), r(), r(), r()};
 std::mt19937 mt(seeds); // random engine with seeds
 std::uniform_real_distribution<float> randOffset(-1.0f, 1.0f);
+
+Sphere place_sphere()
+{
+	return Sphere {
+		glm::vec3(randOffset(mt), randOffset(mt), randOffset(mt))  * 0.5f,
+		abs(randOffset(mt))  * 0.5f,
+	};
+}
 
 Boid (*distributions[5])() = {
         [](){ // random
@@ -176,7 +233,7 @@ Boid (*distributions[5])() = {
 				},
         [](){ // tightly packed
 					return Boid {
-						glm::vec3(randOffset(mt), randOffset(mt), randOffset(mt)) / 2.0f,
+						glm::vec3(randOffset(mt), randOffset(mt), randOffset(mt))  * 0.5f,
 						glm::normalize(glm::vec3(randOffset(mt), randOffset(mt), randOffset(mt)))};
 				},
         [](){ // plane
@@ -188,41 +245,49 @@ Boid (*distributions[5])() = {
         	float x = randOffset(mt);
         	float z = randOffset(mt);
 					return Boid {
-						glm::normalize(glm::vec3(x, randOffset(mt), z)) / 2.0f,
+						glm::normalize(glm::vec3(x, randOffset(mt), z))  * 0.5f,
 						glm::normalize(glm::vec3(-z, 0.0f, x))};
 				},
     };
 
 void CMyApp::InitPositions()
 {	
-
-	Sphere* spheres = (Sphere*)malloc(m_sphere_num * sizeof(Sphere));
+	// Initialize spheres with random center and radius
+	m_spheres = (Sphere*)malloc(m_sphere_num * sizeof(Sphere));
+	m_sphere_world_matrices = (glm::mat4*)malloc(m_sphere_num * sizeof(glm::mat4));
 	for (int i = 0; i < m_sphere_num; ++i)
 	{
-		spheres[i] = Sphere {glm::vec3(0), 0.5f}; // TODO change
-		// spheres[i] = distributions[m_distribution_idx]();	
+		m_spheres[i] = place_sphere();
+		m_sphere_world_matrices[i] = glm::translate(m_spheres[i].center) * glm::scale(glm::vec3(m_spheres[i].radius));
 	}
-	// TODO check if boid would spawn inside sphere
 
 	// Initialize each boid with a posiotion and an angle
 	Boid* boids = (Boid*)malloc(m_inst_num * sizeof(Boid));
 	for (int i = 0; i < m_inst_num; ++i)
 	{
-		boids[i] = distributions[m_distribution_idx]();	
+		// retry if boid is inside a sphere
+		bool inside = true;
+		while (inside) {
+			boids[i] = distributions[m_distribution_idx]();	
+			inside = false;
+			for (int j = 0; j < m_sphere_num; j++)
+			{
+				if (glm::distance(boids[i].pos, m_spheres[j].center) < m_spheres[j].radius)
+				{
+					inside = true;
+					break;
+				}
+			}
+		};
 	}
 
 	// Allocate vectors in device memory
   checkCudaErrors( cudaMalloc(&d_spheres, m_sphere_num * sizeof(Sphere)) );
-  
-  // Put initial positions on GPU
-  checkCudaErrors( cudaMemcpy(d_spheres, spheres, m_sphere_num * sizeof(Sphere), cudaMemcpyHostToDevice) );
-	free(spheres);
-
-	// Allocate vectors in device memory
   checkCudaErrors( cudaMalloc(&d_boids, m_inst_num * sizeof(Boid)) );
   checkCudaErrors( cudaMalloc(&d_sdirs, m_inst_num * sizeof(glm::vec3)) );
   
   // Put initial positions on GPU
+  checkCudaErrors( cudaMemcpy(d_spheres, m_spheres, m_sphere_num * sizeof(Sphere), cudaMemcpyHostToDevice) );
   checkCudaErrors( cudaMemcpy(d_boids, boids, m_inst_num * sizeof(Boid), cudaMemcpyHostToDevice) );
 	free(boids);
 
@@ -275,6 +340,12 @@ void CMyApp::Clean()
 	CleanShaders();
 	CleanGeometry();
 
+	if (m_spheres != nullptr)
+	{
+		free(m_spheres);
+		free(m_sphere_world_matrices);
+	}
+	cudaFree(d_spheres);
 	cudaFree(d_boids);
 	cudaFree(d_sdirs);
 	cudaGraphicsUnregisterResource(world_matricesBO_CUDA);
@@ -284,6 +355,12 @@ void CMyApp::Restart()
 {
 	glDeleteBuffers(1, &world_matricesBO);
 	
+	if (m_spheres != nullptr)
+	{
+		free(m_spheres);
+		free(m_sphere_world_matrices);
+	}
+	cudaFree(d_spheres);
 	cudaFree(d_boids);
 	cudaFree(d_sdirs);
 	cudaGraphicsUnregisterResource(world_matricesBO_CUDA);
@@ -461,8 +538,19 @@ void CMyApp::Render()
 
 	glUniformMatrix4fv( ul("viewProj"), 1, GL_FALSE, glm::value_ptr(m_camera.GetViewProj()) );
 
-	glDrawArrays(GL_LINES, 0, m_CubeGPU.count);
 	glDrawElements(GL_LINES, m_CubeGPU.count, GL_UNSIGNED_INT, 0);
+
+	// Spheres
+	for (int i = 0; i < m_sphere_num; i++)
+	{
+		glUseProgram(m_programSphereID);
+		glBindVertexArray(m_SphereGPU.vaoID);
+
+		glUniformMatrix4fv( ul("viewProj"), 1, GL_FALSE, glm::value_ptr(m_camera.GetViewProj()) );
+		glUniformMatrix4fv( ul("world"), 1, GL_FALSE, glm::value_ptr(m_sphere_world_matrices[i]) );
+
+		glDrawElements(GL_TRIANGLES, m_SphereGPU.count, GL_UNSIGNED_INT, 0);
+	}
 
 	// Boids
 	glUseProgram(m_programBoidID);
@@ -483,6 +571,7 @@ void CMyApp::Render()
 }
 
 int inst_num = 1024;
+int sphere_num = 4;
 void CMyApp::RenderGUI()
 {
 	// ImGui::ShowDemoWindow();
@@ -510,6 +599,7 @@ void CMyApp::RenderGUI()
 	if (ImGui::Begin("Settings"))
 	{
 		ImGui::SliderInt("Boid number", &inst_num, 1, 2048);
+		ImGui::SliderInt("Sphere number", &sphere_num, 0, 32);
 		
 		ImGui::RadioButton( "Random", &m_distribution_idx, 0 );
 		ImGui::RadioButton( "Look to X", &m_distribution_idx, 1);
@@ -520,6 +610,7 @@ void CMyApp::RenderGUI()
 		if (ImGui::Button("Restart"))
 		{
 			m_inst_num = inst_num;
+			m_sphere_num = sphere_num;
 			CMyApp::Restart();
 		}
 	}

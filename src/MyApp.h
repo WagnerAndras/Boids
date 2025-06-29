@@ -89,6 +89,7 @@ protected:
 	// Spheres
 	Sphere* m_spheres;
 	Sphere* d_spheres;
+	glm::mat4* m_sphere_world_matrices;
 
 	// Variables
 	int m_distribution_idx = 0;
@@ -97,7 +98,7 @@ protected:
 	MovementParams m_movement_params = {};
 	
 	int m_inst_num = 1024;
-	int m_sphere_num = 1;
+	int m_sphere_num = 4;
 	
 	float m_ElapsedTimeInSec = 0.0f;
 	float m_DeltaTimeInSec = 0.0f;
@@ -114,6 +115,7 @@ protected:
 	// Shader variables
 	GLuint m_programBoidID = 0;
 	GLuint m_programCubeID = 0;
+	GLuint m_programSphereID = 0;
 
 	// Shader initialization and termination
 	void InitShaders();
@@ -122,6 +124,7 @@ protected:
 	// Geometry variables
 	OGLObject m_BoidGPU = {};
 	OGLObject m_CubeGPU = {};
+	OGLObject m_SphereGPU = {};
 	
 	// Geometry initialization and termination
 	void InitPositions();

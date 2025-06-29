@@ -13,6 +13,7 @@ fs = import('fs')
 fs.copyfile('src/Boid.vert', install : true, install_dir : '.')
 fs.copyfile('src/Boid.frag', install : true, install_dir : '.')
 fs.copyfile('src/Cube.vert', install : true, install_dir : '.')
+fs.copyfile('src/Sphere.vert', install : true, install_dir : '.')
 
 
 executable('Boids',
